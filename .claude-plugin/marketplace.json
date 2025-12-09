@@ -1,0 +1,30 @@
+{
+  "name": "tinymade-skills",
+  "owner": {
+    "name": "tinymade",
+    "email": "tinymade@example.com"
+  },
+  "metadata": {
+    "description": "Personal skills and plugins for Claude Code",
+    "version": "0.1.0",
+    "pluginRoot": "./plugins"
+  },
+  "plugins": [
+    {
+      "name": "example-skill",
+      "source": "./plugins/example-skill",
+      "description": "An example skill demonstrating the plugin structure",
+      "version": "1.0.0",
+      "keywords": ["example", "template"],
+      "category": "utility"
+    },
+    {
+      "name": "worktree-orchestrator",
+      "source": "./plugins/worktree-orchestrator",
+      "description": "Git worktree management with cc-sessions integration for parallel task orchestration",
+      "version": "1.0.0",
+      "keywords": ["git", "worktree", "orchestrator", "parallel", "tasks", "cc-sessions"],
+      "category": "development"
+    }
+  ]
+}
