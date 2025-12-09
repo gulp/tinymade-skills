@@ -6,5 +6,5 @@
     "name": "tinymade"
   },
   "keywords": ["git", "worktree", "orchestrator", "parallel", "tasks", "cc-sessions"],
-  "skills": ["./SKILL.md"]
+  "skills": ["./skills/"]
 }
