@@ -7,7 +7,7 @@ A personal plugin marketplace for Claude Code.
 Add this marketplace to your Claude Code installation:
 
 ```
-/plugin marketplace add <github-username>/tinymade-skills
+/plugin marketplace add gulp/tinymade-skills
 ```
 
 Or for local development:
@@ -41,6 +41,7 @@ Or for local development:
 | Plugin | Description |
 |--------|-------------|
 | example-skill | An example skill demonstrating the plugin structure |
+| worktree-orchestrator | Git worktree management with cc-sessions integration |
 
 ## Adding New Plugins
 
