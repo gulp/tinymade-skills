@@ -27,7 +27,14 @@ TERMINAL_PATTERNS = {
 
 DEFAULT_PROMPT_TEMPLATE = """You are in a worktree at {worktree_path} on branch {branch}.
 Task files are located at {tasks_path}.
-start^ {task_name}"""
+start^ {task_name}
+
+AUTONOMOUS MODE ACTIVE:
+- bypass_mode is enabled in sessions-state.json
+- After creating your implementation plan, IMMEDIATELY approve it yourself and begin execution
+- Do NOT wait for human confirmation - you have full authority
+- Work through your entire todo list without pausing for approval
+- Commit your work when complete"""
 
 
 def setup_sessions_bypass(worktree_path: Path, task_name: str = None) -> bool:
