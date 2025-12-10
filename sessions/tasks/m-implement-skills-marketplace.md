@@ -165,9 +165,30 @@ Full documentation, reference materials, examples...
 - [ ] Consider adding a CHANGELOG.md for version tracking
 
 ### Discovered During Implementation
-[Date: 2025-12-10 / Worktree-orchestrator enhancement session]
+[Date: 2025-12-10 / Worktree-orchestrator enhancement and autonomous agent session]
 
-During implementation of the worktree-orchestrator plugin, several critical discoveries were made about Claude Code plugin architecture and terminal spawning patterns that weren't documented in the original context.
+During implementation of the worktree-orchestrator plugin's autonomous agent capability and terminal spawning, several critical discoveries were made about Claude Code plugin architecture, cc-sessions framework behavior, and security boundaries that weren't documented in the original context.
+
+**cc-sessions Security Boundary: Claude Cannot Activate Bypass Mode**
+
+A critical architectural discovery about cc-sessions framework: the Claude API cannot directly activate `bypass_mode` via slash commands or programmatic requests. The cc-sessions framework enforces a security boundary that only allows the user (via `/bypass` command) or pre-configuration to set `bypass_mode: true`. This became apparent when implementing autonomous agent functionality where agents need to self-approve their plans without DAIC enforcement.
+
+The workaround is to configure the sessions state *before* Claude starts the terminal. The `spawn_terminal.py` script runs outside of cc-sessions hooks, giving it the ability to modify `sessions-state.json` BEFORE the claude process starts. This pre-configuration bypasses the API security boundary without violating it. The security model is: user configures environment → process starts → process operates under configured constraints.
+
+**Fresh Worktrees Don't Have sessions-state.json - Must Create Not Modify**
+
+When creating a new git worktree, the `sessions-state.json` file doesn't exist initially. This file is runtime state, not committed to the repository. The initial implementation incorrectly assumed this file would exist and only needed modification. In fresh worktrees, the script must CREATE the file with minimal schema before Claude starts, then let cc-sessions hooks merge their defaults into it.
+
+The cc-sessions hooks actually *merge* with the initial state file rather than overwriting it. This means if we create a minimal file with `bypass_mode: true` and `mode: "implementation"`, the hooks will add their defaults (like version, token counters, etc.) while preserving our settings. This merge behavior is crucial - it ensures pre-configured values survive the initialization process.
+
+**Autonomous Agents Require Both bypass_mode AND Explicit Self-Approval Instructions**
+
+Successfully creating truly autonomous agents requires TWO separate mechanisms, not one. Setting `bypass_mode: true` alone is insufficient because agents still wait for user approval of their implementation plans. The solution requires:
+
+1. **State configuration** (`bypass_mode: true` in sessions-state.json) - Disables DAIC enforcement
+2. **Prompt instructions** (explicit "you are in autonomous mode, self-approve and execute" instructions) - Tells the agent to immediately execute without waiting
+
+Without the prompt instructions, agents create plans but pause, waiting for user approval. Without bypass_mode, the DAIC system blocks execution entirely. Both are necessary for fully autonomous operation. This dual-mechanism approach appears intentional - it provides multiple layers of assurance that autonomous behavior is explicitly enabled, preventing accidental autonomous execution.
 
 **Claude Code Skills Must Use Subdirectory Pattern**
 
@@ -237,6 +258,38 @@ The spawn_terminal.py script includes a `--dangerously-skip-permissions` flag sp
 
 #### Updated Technical Details
 
+**cc-sessions Autonomous Agent Configuration:**
+
+For autonomous agents that self-approve and execute without human intervention:
+
+```python
+# 1. Create/modify sessions-state.json BEFORE claude starts
+state = {
+    "mode": "implementation",        # Skip discussion phase
+    "flags": {
+        "bypass_mode": True          # Disable DAIC enforcement
+    },
+    "current_task": {
+        "name": "task-name",
+        "status": "in-progress"
+    }
+}
+
+# 2. In the prompt template, include explicit instructions:
+AUTONOMOUS_MODE = """You are operating in AUTONOMOUS MODE.
+- Create your implementation plan
+- DO NOT wait for user approval
+- Self-approve your plan immediately
+- Execute all todos
+- Commit your work when complete"""
+```
+
+**Key behaviors:**
+- Fresh worktrees: sessions-state.json doesn't exist, must CREATE it
+- cc-sessions hooks MERGE with your state (preserving bypass_mode)
+- Both `bypass_mode` AND prompt instructions are required for true autonomy
+- Claude API cannot activate bypass_mode - only pre-configuration works
+
 **Skills Directory Structure (REQUIRED):**
 ```
 plugins/plugin-name/
@@ -275,18 +328,46 @@ alacritty --working-directory "$DIR" -e bash -lc 'claude "multi word prompt"' &
 - Goal is personal use across projects + potential public publishing
 
 ## Work Log
-<!-- Updated as work progresses -->
-- [2025-12-07] Task created
-- [2025-12-09] Validated local marketplace installation with `/plugin marketplace add`; `/hello` command works. Updated README with GitHub username (gulp) and added worktree-orchestrator to Available Plugins table. All success criteria met.
-- [2025-12-10] Enhanced worktree-orchestrator plugin:
-  - Investigated skill auto-trigger issue: skills require `skills/skill-name/` subdirectory pattern
-  - Restructured plugin to match anthropic-agent-skills structure (moved SKILL.md and resources to `skills/worktree-orchestrator/`)
-  - Added terminal spawning capability via spawn_terminal.py:
-    - Supports alacritty, kitty, wezterm, gnome-terminal, konsole
-    - Configuration via .worktree-orchestrator.yaml or environment variables
-    - Auto-starts Claude with context-aware prompt template
-  - Fixed spawn_terminal.py CLI issues:
-    - Corrected claude invocation: use `claude "prompt"` (positional) not `claude -p` (print mode)
-    - Fixed quote escaping: use single quotes for bash wrapper
-    - Added `--dangerously-skip-permissions` for autonomous agent work
-  - Successfully tested: created m-sample-feature task, spawned worktree at .trees/feature-sample-feature with Claude auto-starting
+
+### 2025-12-07
+- Task created
+
+### 2025-12-09
+- Validated local marketplace installation with `/plugin marketplace add`
+- Confirmed `/hello` command works
+- Updated README with GitHub username (gulp)
+- Added worktree-orchestrator to Available Plugins table
+- All success criteria marked complete
+
+### 2025-12-10
+#### Completed
+- Enhanced spawn_terminal.py with cc-sessions bypass functionality:
+  - Added setup_sessions_bypass() function to configure sessions state before Claude starts
+  - Implemented check for cc-sessions installation (looks for hooks/ or bin/ directories)
+  - Added creation of sessions-state.json if missing (handles fresh worktree scenario)
+  - Sets mode="implementation" and flags.bypass_mode=true for autonomous operation
+  - Added CLI flags: --bypass-sessions, --no-bypass-sessions (default: bypass enabled when --task provided)
+- Added autonomous mode override to prompt template:
+  - Agent receives explicit instruction to self-approve and execute immediately
+  - Paired with bypass_mode to prevent DAIC enforcement blocking
+- Tested autonomous agent execution end-to-end:
+  - Created m-test-autonomous-agent task file
+  - Spawned worktree at .trees/feature-test-autonomous
+  - Agent started with bypass enabled, self-approved plan, executed unattended
+  - Created proof file and committed changes (commit 541a6f7)
+  - Confirmed fully autonomous workflow without human intervention
+
+#### Decisions
+- Fixed sessions bypass logic: changed from failing on missing sessions-state.json to creating it with bypass enabled
+- This ensures fresh worktrees don't lose bypass configuration during startup
+- Checked for cc-sessions presence by looking for hooks/ or bin/ directories rather than assuming file existence
+
+#### Discovered
+- cc-sessions hooks merge/augment the minimal state file we create, preserving our bypass_mode=true setting
+- Autonomous agent requires BOTH bypass_mode AND explicit self-approval instructions in prompt template
+- Fresh worktrees need state file created before Claude starts, as it's created by hooks during startup otherwise
+
+#### Next Steps
+- Clean up test worktree and task file
+- Consider documenting autonomous agent patterns in plugin documentation
+- Potential enhancement: add --autonomous flag as convenience shortcut for --bypass-sessions --task

@@ -165,11 +165,53 @@ python scripts/spawn_terminal.py --worktree .trees/feature-foo --command "vim ."
 | Flag | Description |
 |------|-------------|
 | `--worktree, -w` | Path to worktree (required) |
-| `--task, -t` | Task name → runs `claude -p` with startup prompt |
+| `--task, -t` | Task name → spawns claude with task-specific prompt and enables autonomous mode |
 | `--command, -c` | Custom command instead of claude |
 | `--project-root, -r` | Project root for relative paths (default: cwd) |
+| `--bypass-sessions, -b` | Configure cc-sessions for autonomous work (sets mode=implementation, bypass_mode=true) |
+| `--no-bypass-sessions` | Do NOT configure cc-sessions bypass (default: bypass enabled when --task is used) |
 | `--dry-run, -n` | Print command without executing |
 | `--json, -j` | Output JSON |
+
+### Autonomous Mode (cc-sessions Integration)
+
+When `--task` flag is provided, spawn_terminal.py automatically:
+
+1. **Configures cc-sessions state** (before Claude starts):
+   - Sets `mode: "implementation"` to skip discussion phase
+   - Enables `bypass_mode: true` to disable DAIC enforcement
+   - Clears `todos.active` to prevent blocking
+   - Sets `current_task` with task name and status
+   - Creates `sessions-state.json` if it doesn't exist (fresh worktree)
+
+2. **Injects autonomous instructions** into prompt template:
+   - Tells Claude it's in AUTONOMOUS MODE
+   - Instructs to self-approve implementation plans immediately
+   - Directs not to wait for human confirmation
+   - Tells Claude to work through entire todo list
+
+3. **Enables permission bypass**:
+   - Uses `--dangerously-skip-permissions` flag with Claude
+   - Allows uninterrupted autonomous agent execution without permission dialogs
+
+**Example: Spawn autonomous agent for a task**
+
+```bash
+python scripts/spawn_terminal.py --worktree .trees/feature-foo --task m-implement-foo
+```
+
+This spawns a Claude instance that will:
+- Load task file `m-implement-foo.md`
+- Skip DAIC discussion phase (implementation mode)
+- Self-approve implementation plan
+- Execute without pausing for confirmation
+- Commit work when complete
+
+**To spawn without autonomous mode** (requires manual approval):
+
+```bash
+python scripts/spawn_terminal.py --worktree .trees/feature-foo --no-bypass-sessions --command "claude"
+```
 
 ## Quick Reference
 

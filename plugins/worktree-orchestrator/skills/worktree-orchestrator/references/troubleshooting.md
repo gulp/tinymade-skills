@@ -961,14 +961,16 @@ Error: Permission denied
    chmod 755 .trees/feature-foo
    ```
 
-3. **Use --dangerously-skip-permissions for automation:**
+3. **For autonomous agent workflows:**
    ```bash
-   # For autonomous agent workflows
+   # Use --task flag to enable autonomous mode
+   # (sets bypass_mode, uses --dangerously-skip-permissions automatically)
    python scripts/spawn_terminal.py \
      --worktree .trees/foo \
-     --task m-test \
-     --dangerously-skip-permissions
+     --task m-test
    ```
+
+   The `--dangerously-skip-permissions` flag is automatically used when spawning Claude with `--task`.
 
 ### Error: YAML config not loading
 
