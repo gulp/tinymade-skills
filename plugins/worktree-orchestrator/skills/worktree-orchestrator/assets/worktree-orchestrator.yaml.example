@@ -1,0 +1,19 @@
+# Worktree Orchestrator Configuration
+# Copy to project root as .worktree-orchestrator.yaml
+
+terminal:
+  # Terminal emulator to use
+  # Options: alacritty, kitty, wezterm, gnome-terminal, konsole
+  # Falls back to: $WORKTREE_TERMINAL -> $TERMINAL -> alacritty
+  emulator: alacritty
+
+  claude:
+    # Auto-start claude when spawning terminal with a task
+    auto_start: true
+
+    # Prompt template for claude -p
+    # Available variables: {worktree_path}, {branch}, {tasks_path}, {task_name}
+    prompt_template: |
+      You are in a worktree at {worktree_path} on branch {branch}.
+      Task files are located at {tasks_path}.
+      start^ {task_name}

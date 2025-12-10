@@ -1,6 +1,6 @@
 ---
 name: worktree-orchestrator
-description: Use PROACTIVELY whenever user mentions "worktree", "worktrees", "parallel tasks", or "orchestrate". Auto-trigger on "create worktree from task", "show tasks in worktrees", "peek at file in worktree", "list worktrees", or any worktree-related request. Integrates with cc-sessions for task-based worktree management. Handles creation, listing, cleanup, orchestration, and multi-task branch patterns.
+description: Use PROACTIVELY whenever user mentions "worktree", "worktrees", "parallel tasks", "orchestrate", or "fork terminal". Auto-trigger on "create worktree from task", "show tasks in worktrees", "peek at file in worktree", "list worktrees", "open terminal in worktree", or any worktree-related request. Integrates with cc-sessions for task-based worktree management. Handles creation, listing, cleanup, orchestration, terminal spawning, and multi-task branch patterns.
 ---
 
 # Worktree Orchestrator
@@ -23,6 +23,11 @@ python scripts/worktree_status.py sessions/tasks
 
 # Check if safe to cleanup branch → JSON (exits 0 if safe, 1 if not)
 python scripts/check_cleanup_safe.py feature/pick-cli sessions/tasks
+
+# Spawn terminal in worktree (with optional claude auto-start)
+python scripts/spawn_terminal.py --worktree .trees/feature-foo --task m-implement-foo
+python scripts/spawn_terminal.py --worktree .trees/feature-foo  # just shell
+python scripts/spawn_terminal.py --worktree .trees/feature-foo --command "vim ."
 ```
 
 ## Quick Decision Matrix
@@ -31,6 +36,9 @@ python scripts/check_cleanup_safe.py feature/pick-cli sessions/tasks
 |---------|--------|
 | "create worktree for X" | Create single worktree |
 | "create worktree from task X" | Run `parse_task.py`, create worktree from branch |
+| "create worktree and open terminal" | Create worktree + run `spawn_terminal.py` |
+| "open terminal in worktree X" | Run `spawn_terminal.py --worktree X` |
+| "fork terminal for task X" | Run `spawn_terminal.py --worktree X --task X` |
 | "list worktrees" / "show tasks" | Run `worktree_status.py` |
 | "remove worktree X" | Run `check_cleanup_safe.py` first, then remove |
 
@@ -100,6 +108,69 @@ git worktree remove .trees/feature-pick-cli
 git branch -d feature/pick-cli  # Optional: delete branch
 ```
 
+## Terminal Spawning
+
+Spawn terminals in worktrees with optional Claude auto-start.
+
+### Configuration
+
+Create `.worktree-orchestrator.yaml` in project root (optional):
+
+```yaml
+terminal:
+  emulator: alacritty  # or kitty, wezterm, gnome-terminal, konsole
+  claude:
+    auto_start: true
+    prompt_template: |
+      You are in a worktree at {worktree_path} on branch {branch}.
+      Task files are located at {tasks_path}.
+      start^ {task_name}
+```
+
+**Fallback chain:** Config file → `$WORKTREE_TERMINAL` → `$TERMINAL` → alacritty
+
+### Spawn Terminal with Claude + Task
+
+```bash
+# Parse task, create worktree, spawn terminal with claude
+TASK_INFO=$(python scripts/parse_task.py sessions/tasks/m-implement-feature.md)
+BRANCH=$(echo "$TASK_INFO" | jq -r '.branch')
+FOLDER=$(echo "$TASK_INFO" | jq -r '.folder')
+TASK_NAME=$(echo "$TASK_INFO" | jq -r '.name')
+
+# Create worktree if needed
+git worktree add ".trees/$FOLDER" "$BRANCH" 2>/dev/null || true
+
+# Spawn terminal with claude auto-start
+python scripts/spawn_terminal.py \
+  --worktree ".trees/$FOLDER" \
+  --task "$TASK_NAME" \
+  --project-root "$(pwd)"
+```
+
+### Spawn Terminal (Shell Only)
+
+```bash
+python scripts/spawn_terminal.py --worktree .trees/feature-foo
+```
+
+### Spawn Terminal (Custom Command)
+
+```bash
+python scripts/spawn_terminal.py --worktree .trees/feature-foo --command "vim ."
+```
+
+### spawn_terminal.py Options
+
+| Flag | Description |
+|------|-------------|
+| `--worktree, -w` | Path to worktree (required) |
+| `--task, -t` | Task name → runs `claude -p` with startup prompt |
+| `--command, -c` | Custom command instead of claude |
+| `--project-root, -r` | Project root for relative paths (default: cwd) |
+| `--dry-run, -n` | Print command without executing |
+| `--json, -j` | Output JSON |
+
 ## Quick Reference
 
 ```bash
@@ -145,4 +216,4 @@ cat .trees/feature-pick-cli/src/file.ts
 
 ---
 
-**Version**: 3.0.0 | **Author**: tinymade
+**Version**: 3.1.0 | **Author**: tinymade
