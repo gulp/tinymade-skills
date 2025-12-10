@@ -49,17 +49,38 @@ def setup_sessions_bypass(worktree_path: Path, task_name: str = None) -> bool:
     This runs BEFORE claude starts, bypassing the security boundary
     that prevents Claude from activating bypass mode via API.
 
-    Returns True if state was configured, False if sessions not found.
-    """
-    sessions_state_path = worktree_path / "sessions" / "sessions-state.json"
+    Creates sessions-state.json if it doesn't exist (fresh worktree scenario).
 
-    if not sessions_state_path.exists():
-        # No cc-sessions in this worktree - that's fine
+    Returns True if state was configured, False if cc-sessions not installed.
+    """
+    sessions_dir = worktree_path / "sessions"
+    sessions_state_path = sessions_dir / "sessions-state.json"
+
+    # Check if cc-sessions is installed (look for hooks or bin directory)
+    has_cc_sessions = (sessions_dir / "hooks").exists() or (sessions_dir / "bin").exists()
+
+    if not has_cc_sessions:
+        # No cc-sessions in this worktree
         return False
 
     try:
-        with open(sessions_state_path, 'r') as f:
-            state = json.load(f)
+        if sessions_state_path.exists():
+            # Load existing state
+            with open(sessions_state_path, 'r') as f:
+                state = json.load(f)
+        else:
+            # Fresh worktree - create state file with minimal structure
+            state = {
+                "version": "unknown",
+                "current_task": {},
+                "active_protocol": None,
+                "api": {},
+                "mode": "discussion",
+                "todos": {"active": [], "stashed": []},
+                "model": "opus",
+                "flags": {},
+                "metadata": {}
+            }
 
         # Set implementation mode and bypass
         state["mode"] = "implementation"
