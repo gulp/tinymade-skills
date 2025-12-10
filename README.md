@@ -41,7 +41,7 @@ Or for local development:
 | Plugin | Description |
 |--------|-------------|
 | example-skill | An example skill demonstrating the plugin structure |
-| worktree-orchestrator | Git worktree management with cc-sessions integration |
+| worktree-orchestrator | Git worktree management with cc-sessions integration and terminal spawning |
 
 ## Adding New Plugins
 
@@ -51,11 +51,30 @@ Or for local development:
    ├── plugin.json
    ├── commands/
    │   └── my-command.md
-   └── agents/
-       └── my-agent.md
+   ├── agents/
+   │   └── my-agent.md
+   └── skills/              # For auto-triggering skills
+       └── skill-name/
+           ├── SKILL.md     # Skill definition with frontmatter
+           ├── scripts/     # Optional bundled scripts
+           └── references/  # Optional reference docs
    ```
 
-2. Add the plugin to `.claude-plugin/marketplace.json`:
+2. Configure `plugin.json`:
+   ```json
+   {
+     "name": "my-new-skill",
+     "description": "Description of what it does",
+     "version": "1.0.0",
+     "author": {"name": "Your Name"},
+     "keywords": ["relevant", "tags"],
+     "commands": ["./commands/"],
+     "agents": ["./agents/"],
+     "skills": ["./skills/"]
+   }
+   ```
+
+3. Add the plugin to `.claude-plugin/marketplace.json`:
    ```json
    {
      "name": "my-new-skill",
@@ -66,7 +85,9 @@ Or for local development:
    }
    ```
 
-3. Commit and push to make available across projects.
+4. Commit and push to make available across projects.
+
+**Note**: Skills require the `skills/skill-name/SKILL.md` subdirectory pattern for auto-triggering to work correctly.
 
 ## License
 

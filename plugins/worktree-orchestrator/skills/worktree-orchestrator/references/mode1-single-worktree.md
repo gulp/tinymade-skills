@@ -489,9 +489,18 @@ Quick Reference:
 
 **Ask user:**
 "Would you like me to:
-- [ ] Open the worktree in a new terminal
+- [ ] Open the worktree in a new terminal (with Claude auto-start)
 - [ ] Generate a setup script for future worktrees
 - [ ] Show git commands for advanced management"
+
+**If user wants terminal:**
+```bash
+# Spawn terminal with Claude auto-started
+python scripts/spawn_terminal.py --worktree "$WORKTREE_PATH" --task "$TASK_NAME"
+
+# Or just a shell
+python scripts/spawn_terminal.py --worktree "$WORKTREE_PATH"
+```
 
 **Based on response, provide appropriate outputs**
 

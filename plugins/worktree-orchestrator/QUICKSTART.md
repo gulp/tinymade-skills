@@ -18,16 +18,19 @@ Restart Claude Code after installation.
 cd /path/to/your/cc-sessions-project
 
 # 1. Parse a task file
-python /path/to/tinymade-skills/plugins/worktree-orchestrator/scripts/parse_task.py sessions/tasks/m-implement-feature.md
+python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/parse_task.py sessions/tasks/m-implement-feature.md
 
 # 2. List tasks grouped by branch
-python /path/to/tinymade-skills/plugins/worktree-orchestrator/scripts/list_tasks_by_branch.py sessions/tasks
+python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/list_tasks_by_branch.py sessions/tasks
 
 # 3. Get worktree status
-python /path/to/tinymade-skills/plugins/worktree-orchestrator/scripts/worktree_status.py sessions/tasks
+python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/worktree_status.py sessions/tasks
 
 # 4. Check if safe to cleanup
-python /path/to/tinymade-skills/plugins/worktree-orchestrator/scripts/check_cleanup_safe.py feature/my-branch sessions/tasks
+python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/check_cleanup_safe.py feature/my-branch sessions/tasks
+
+# 5. Spawn terminal in worktree
+python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_terminal.py --worktree .trees/feature-foo --task m-implement-foo
 ```
 
 ## Basic Usage
@@ -43,6 +46,14 @@ Claude will:
 2. Create `.trees/{branch-normalized}/`
 3. Install dependencies
 4. Report success
+
+### Create Worktree with Terminal
+
+```
+User: Create a worktree from task m-implement-auth.md and open a terminal
+```
+
+Claude will create the worktree and spawn a terminal with Claude auto-started.
 
 ### List Worktrees with Tasks
 

@@ -164,6 +164,112 @@ Full documentation, reference materials, examples...
 - [ ] Consider adding repository description on GitHub
 - [ ] Consider adding a CHANGELOG.md for version tracking
 
+### Discovered During Implementation
+[Date: 2025-12-10 / Worktree-orchestrator enhancement session]
+
+During implementation of the worktree-orchestrator plugin, several critical discoveries were made about Claude Code plugin architecture and terminal spawning patterns that weren't documented in the original context.
+
+**Claude Code Skills Must Use Subdirectory Pattern**
+
+While implementing skill auto-triggering for worktree-orchestrator, we discovered that skills don't load when SKILL.md is placed at the plugin root. The plugin was initially structured as:
+
+```
+plugins/worktree-orchestrator/
+├── plugin.json (with "skills": ["./SKILL.md"])
+├── SKILL.md
+├── scripts/
+└── references/
+```
+
+This structure prevented Claude Code from recognizing the skill entirely - it wouldn't appear in the Skill tool's available skills list and wouldn't auto-trigger on description keywords. Investigation of working plugins (anthropic-agent-skills) revealed the required pattern:
+
+```
+plugins/worktree-orchestrator/
+├── plugin.json (with "skills": ["./skills/"])
+└── skills/
+    └── worktree-orchestrator/
+        ├── SKILL.md
+        ├── scripts/
+        ├── references/
+        └── assets/
+```
+
+The actual requirement is `skills/skill-name/SKILL.md` subdirectory structure. After restructuring to match this pattern, the skill immediately became available and auto-triggering worked correctly. This wasn't documented in the Claude Code plugin documentation and represents a critical structural requirement for any skill-based plugin development.
+
+**Claude CLI Prompt Invocation Pattern**
+
+When implementing terminal spawning with Claude auto-start, we initially attempted to use `claude -p "prompt"` to pass the startup prompt. This failed silently - the terminal would open but Claude wouldn't receive the prompt. Investigation revealed that `-p` is actually the "print mode" flag (for non-interactive output), NOT for passing prompts.
+
+The correct invocation pattern is:
+```bash
+claude "your prompt text"  # Positional argument
+```
+
+This distinction is critical for programmatic Claude invocation. Using `-p` won't produce an error, it just won't work as expected. Future implementations involving Claude CLI automation need to use positional arguments for prompts, not the `-p` flag.
+
+**Terminal Command Quote Escaping for Bash Wrappers**
+
+When spawning terminal emulators with commands, the quote escaping pattern is non-obvious. The terminal spawn command structure is:
+
+```bash
+alacritty -e bash -lc "command to run" &
+```
+
+However, when the inner command itself contains quotes (like `claude "prompt with spaces"`), the escaping becomes critical. The working pattern discovered through trial is:
+
+```bash
+alacritty -e bash -lc 'claude "prompt text"' &
+# Outer: single quotes for bash -lc wrapper
+# Inner: double quotes for claude argument
+```
+
+NOT:
+```bash
+alacritty -e bash -lc "claude \"prompt text\"" &
+# This pattern fails - the escaping doesn't work properly
+```
+
+The single-quote outer wrapper prevents the shell from interpreting the inner double quotes, allowing them to be passed correctly to the bash -lc command. This pattern is essential for spawn_terminal.py to correctly construct terminal commands with nested quoting.
+
+**Autonomous Agent Permission Handling**
+
+The spawn_terminal.py script includes a `--dangerously-skip-permissions` flag specifically for autonomous agent workflows. This allows the script to bypass permission checks when being invoked programmatically by Claude agents, enabling fully automated worktree-with-terminal workflows without human intervention. This wasn't in the original design but emerged as a requirement for the agent orchestration use case.
+
+#### Updated Technical Details
+
+**Skills Directory Structure (REQUIRED):**
+```
+plugins/plugin-name/
+├── plugin.json
+│   └── "skills": ["./skills/"]  # Points to directory
+└── skills/
+    └── skill-name/               # Subdirectory named after skill
+        ├── SKILL.md              # Skill definition with frontmatter
+        ├── scripts/              # Optional bundled scripts
+        ├── references/           # Optional reference docs
+        └── assets/               # Optional templates/resources
+```
+
+**Claude CLI Invocation:**
+```bash
+# Correct: Positional argument
+claude "your prompt text here"
+
+# Incorrect: -p is print mode, not prompt
+claude -p "your prompt"  # This won't work as expected
+```
+
+**Terminal Spawn Quote Escaping:**
+```bash
+# Correct pattern
+alacritty -e bash -lc 'claude "prompt text"' &
+
+# Also works for complex commands
+alacritty --working-directory "$DIR" -e bash -lc 'claude "multi word prompt"' &
+
+# Key: single quotes around the entire bash command, double quotes inside
+```
+
 ## User Notes
 - Reference: https://code.claude.com/docs/en/plugin-marketplaces
 - Goal is personal use across projects + potential public publishing
@@ -172,3 +278,15 @@ Full documentation, reference materials, examples...
 <!-- Updated as work progresses -->
 - [2025-12-07] Task created
 - [2025-12-09] Validated local marketplace installation with `/plugin marketplace add`; `/hello` command works. Updated README with GitHub username (gulp) and added worktree-orchestrator to Available Plugins table. All success criteria met.
+- [2025-12-10] Enhanced worktree-orchestrator plugin:
+  - Investigated skill auto-trigger issue: skills require `skills/skill-name/` subdirectory pattern
+  - Restructured plugin to match anthropic-agent-skills structure (moved SKILL.md and resources to `skills/worktree-orchestrator/`)
+  - Added terminal spawning capability via spawn_terminal.py:
+    - Supports alacritty, kitty, wezterm, gnome-terminal, konsole
+    - Configuration via .worktree-orchestrator.yaml or environment variables
+    - Auto-starts Claude with context-aware prompt template
+  - Fixed spawn_terminal.py CLI issues:
+    - Corrected claude invocation: use `claude "prompt"` (positional) not `claude -p` (print mode)
+    - Fixed quote escaping: use single quotes for bash wrapper
+    - Added `--dangerously-skip-permissions` for autonomous agent work
+  - Successfully tested: created m-sample-feature task, spawned worktree at .trees/feature-sample-feature with Claude auto-starting

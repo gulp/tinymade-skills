@@ -13,7 +13,8 @@ Comprehensive troubleshooting for common git worktree issues, errors, and edge c
 7. [Dependency Installation](#dependency-installation)
 8. [Git Operations](#git-operations)
 9. [Cleanup Issues](#cleanup-issues)
-10. [Advanced Debugging](#advanced-debugging)
+10. [Terminal Spawning Issues](#terminal-spawning-issues)
+11. [Advanced Debugging](#advanced-debugging)
 
 ---
 
@@ -824,6 +825,244 @@ git worktree add ../fresh-start branch-name
 
 # Restore backed up changes
 cp -r ~/backup/* ../fresh-start/src/
+```
+
+---
+
+## Terminal Spawning Issues
+
+### Error: Terminal doesn't open
+
+**Symptoms:**
+- `spawn_terminal.py` runs without error but no terminal appears
+- Script exits with success but nothing visible happens
+
+**Causes & Solutions:**
+
+1. **Terminal emulator not installed:**
+   ```bash
+   # Check if terminal is available
+   which alacritty kitty wezterm gnome-terminal konsole
+
+   # Install your preferred terminal
+   # Arch: pacman -S alacritty
+   # Ubuntu: apt install alacritty
+   # macOS: brew install --cask alacritty
+   ```
+
+2. **Wrong terminal configured:**
+   ```bash
+   # Check configuration
+   cat .worktree-orchestrator.yaml | grep emulator
+
+   # Override with environment variable
+   export WORKTREE_TERMINAL=kitty
+   python scripts/spawn_terminal.py --worktree .trees/feature-foo
+   ```
+
+3. **Terminal in background without display:**
+   ```bash
+   # Check if process started
+   ps aux | grep alacritty
+
+   # If running but not visible, kill and retry
+   pkill alacritty
+   python scripts/spawn_terminal.py --worktree .trees/feature-foo
+   ```
+
+### Error: Claude doesn't auto-start
+
+**Symptoms:**
+- Terminal opens but drops to shell instead of starting Claude
+- No error message visible
+
+**Causes & Solutions:**
+
+1. **Claude not in PATH:**
+   ```bash
+   # Check if claude is available
+   which claude
+
+   # If not found, add to PATH or use full path
+   export PATH="$HOME/.local/bin:$PATH"
+   ```
+
+2. **Using wrong claude flag (CRITICAL):**
+   ```bash
+   # WRONG - will fail silently
+   claude -p "prompt text"  # -p is print mode, not prompt!
+
+   # CORRECT - positional argument
+   claude "prompt text"
+   ```
+
+   The script uses the correct pattern. If you see `-p` in error logs, this is the issue.
+
+3. **Quote escaping issue:**
+   ```bash
+   # Check dry-run output
+   python scripts/spawn_terminal.py --worktree .trees/foo --task m-test --dry-run
+
+   # Should show single quotes around bash command:
+   # bash -lc 'claude "prompt text"'
+
+   # NOT double quotes (will break):
+   # bash -lc "claude \"prompt text\""
+   ```
+
+### Error: Worktree path not found
+
+**Full Error:**
+```
+Error: Worktree path does not exist: /path/to/.trees/feature-foo
+```
+
+**Solutions:**
+
+1. **Create worktree first:**
+   ```bash
+   git worktree add .trees/feature-foo -b feature/foo
+   python scripts/spawn_terminal.py --worktree .trees/feature-foo
+   ```
+
+2. **Check path typo:**
+   ```bash
+   # List existing worktrees
+   git worktree list
+
+   # Use exact path from list
+   python scripts/spawn_terminal.py --worktree "$(git worktree list | grep feature-foo | awk '{print $1}')"
+   ```
+
+### Error: Permission denied spawning terminal
+
+**Symptoms:**
+```
+Error: Permission denied
+```
+
+**Solutions:**
+
+1. **Check script permissions:**
+   ```bash
+   ls -la scripts/spawn_terminal.py
+   # Should be: -rwxr-xr-x
+
+   # Fix if needed
+   chmod +x scripts/spawn_terminal.py
+   ```
+
+2. **Check worktree directory permissions:**
+   ```bash
+   ls -ld .trees/feature-foo
+   # Should be: drwxr-xr-x
+
+   # Fix if needed
+   chmod 755 .trees/feature-foo
+   ```
+
+3. **Use --dangerously-skip-permissions for automation:**
+   ```bash
+   # For autonomous agent workflows
+   python scripts/spawn_terminal.py \
+     --worktree .trees/foo \
+     --task m-test \
+     --dangerously-skip-permissions
+   ```
+
+### Error: YAML config not loading
+
+**Symptoms:**
+- Configuration file ignored
+- Always uses default terminal (alacritty)
+
+**Solutions:**
+
+1. **Check file location:**
+   ```bash
+   # Must be in project root
+   ls -la .worktree-orchestrator.yaml
+
+   # NOT in worktree directory
+   # NOT in .git directory
+   ```
+
+2. **Check YAML syntax:**
+   ```bash
+   # Validate YAML
+   python -c "import yaml; yaml.safe_load(open('.worktree-orchestrator.yaml'))"
+
+   # Should output parsed config or show syntax error
+   ```
+
+3. **Install PyYAML if missing:**
+   ```bash
+   pip install pyyaml
+
+   # Script will fall back to env vars if yaml not available
+   ```
+
+### Terminal spawns but closes immediately
+
+**Causes & Solutions:**
+
+1. **Command fails immediately:**
+   ```bash
+   # Test command manually
+   cd .trees/feature-foo
+   claude "test prompt"
+
+   # If that fails, claude is the issue, not spawn_terminal
+   ```
+
+2. **Wrong working directory:**
+   ```bash
+   # Verify worktree path is correct
+   python scripts/spawn_terminal.py --worktree .trees/foo --dry-run
+
+   # Check --working-directory matches actual path
+   ```
+
+3. **bash -lc issues:**
+   ```bash
+   # Test bash wrapper manually
+   alacritty -e bash -lc 'echo "test"; sleep 5'
+
+   # Should show "test" and stay open for 5 seconds
+   # If closes immediately, check terminal config
+   ```
+
+### Debug terminal spawning
+
+**Enable verbose output:**
+```bash
+# JSON output for debugging
+python scripts/spawn_terminal.py \
+  --worktree .trees/foo \
+  --task m-test \
+  --json
+
+# Shows exact command being executed
+```
+
+**Dry-run mode:**
+```bash
+# See command without executing
+python scripts/spawn_terminal.py \
+  --worktree .trees/foo \
+  --task m-test \
+  --dry-run
+
+# Copy command and test manually
+```
+
+**Manual terminal testing:**
+```bash
+# Test terminal directly
+alacritty --working-directory .trees/feature-foo -e bash -lc 'claude "start^ m-test"'
+
+# If this works, spawn_terminal.py should work
+# If this fails, terminal/claude configuration is the issue
 ```
 
 ---

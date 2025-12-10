@@ -160,6 +160,9 @@ Other tasks using this worktree:
 Next steps:
   cd .trees/feature-pick-cli
   claude
+
+Or spawn terminal with Claude auto-start:
+  python scripts/spawn_terminal.py --worktree .trees/feature-pick-cli --task m-implement-pick-cli
 ```
 
 ---
