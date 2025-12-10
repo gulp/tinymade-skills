@@ -16,12 +16,13 @@ import sys
 from pathlib import Path
 
 # Terminal emulator command patterns
+# Use single quotes for outer wrapper to avoid escaping issues with inner double quotes
 TERMINAL_PATTERNS = {
-    "alacritty": 'alacritty --working-directory "{dir}" -e bash -lc "{cmd}"',
-    "kitty": 'kitty --directory "{dir}" bash -lc "{cmd}"',
-    "wezterm": 'wezterm start --cwd "{dir}" -- bash -lc "{cmd}"',
-    "gnome-terminal": 'gnome-terminal --working-directory="{dir}" -- bash -lc "{cmd}"',
-    "konsole": 'konsole --workdir "{dir}" -e bash -lc "{cmd}"',
+    "alacritty": "alacritty --working-directory '{dir}' -e bash -lc '{cmd}'",
+    "kitty": "kitty --directory '{dir}' bash -lc '{cmd}'",
+    "wezterm": "wezterm start --cwd '{dir}' -- bash -lc '{cmd}'",
+    "gnome-terminal": "gnome-terminal --working-directory='{dir}' -- bash -lc '{cmd}'",
+    "konsole": "konsole --workdir '{dir}' -e bash -lc '{cmd}'",
 }
 
 DEFAULT_PROMPT_TEMPLATE = """You are in a worktree at {worktree_path} on branch {branch}.
@@ -128,10 +129,13 @@ def build_claude_command(
         task_name=task_name
     )
 
-    # Escape for shell
-    escaped_prompt = prompt.replace('"', '\\"').replace("'", "'\\''")
+    # Escape single quotes for the outer shell wrapper (bash -lc '...')
+    # Double quotes inside are fine since outer wrapper uses single quotes
+    escaped_prompt = prompt.replace("'", "'\\''")
 
-    return f'claude -p "{escaped_prompt}"'
+    # Use claude with prompt as positional argument (NOT -p which is print mode)
+    # --dangerously-skip-permissions allows uninterrupted autonomous work
+    return f'claude --dangerously-skip-permissions "{escaped_prompt}"'
 
 
 def build_terminal_command(
@@ -145,7 +149,7 @@ def build_terminal_command(
     if not pattern:
         # Fallback: try generic pattern
         print(f"Warning: Unknown terminal '{emulator}', using generic pattern", file=sys.stderr)
-        pattern = '{emulator} --working-directory "{dir}" -e bash -lc "{cmd}"'
+        pattern = "{emulator} --working-directory '{dir}' -e bash -lc '{cmd}'"
         pattern = pattern.replace("{emulator}", emulator)
 
     return pattern.format(dir=str(worktree_path.absolute()), cmd=inner_command)
