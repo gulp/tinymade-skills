@@ -1,0 +1,16 @@
+{
+  "name": "plane",
+  "version": "1.0.0",
+  "description": "Plane.so integration for task management - sync issues, discover gaps, link tasks, create issues",
+  "author": {
+    "name": "tinymade"
+  },
+  "keywords": [
+    "plane",
+    "project-management",
+    "tasks",
+    "issues",
+    "sync"
+  ],
+  "license": "MIT"
+}

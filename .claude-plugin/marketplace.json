@@ -25,6 +25,14 @@
       "version": "1.0.0",
       "keywords": ["git", "worktree", "orchestrator", "parallel", "tasks", "cc-sessions"],
       "category": "development"
+    },
+    {
+      "name": "plane",
+      "source": "./plugins/plane",
+      "description": "Plane.so integration - sync issues, discover gaps, link tasks, create issues",
+      "version": "1.0.0",
+      "keywords": ["plane", "project-management", "tasks", "issues", "sync"],
+      "category": "project-management"
     }
   ]
 }
