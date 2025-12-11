@@ -5,103 +5,78 @@ description: Compare local tasks with Plane issues. Use when user says "discover
 
 # Plane Discover Skill
 
-Compares local task files against cached Plane issues to show unlinked items in both directions.
+Compares local task files against cached Plane issues to show unlinked items.
 
-## When to Use
+## Bundled Scripts
 
-- User wants to see which Plane issues have no local task
-- User wants to see which local tasks aren't linked to Plane
-- Before creating new tasks to avoid duplicates
-- During backlog grooming/discovery
+```bash
+# Find unlinked issues and tasks
+python scripts/discover.py --tasks-dir sessions/tasks
 
-## Prerequisites
+# Also check status mismatches
+python scripts/discover.py --tasks-dir sessions/tasks --status-check
 
-- `.claude/plane-sync.json` exists (run plane-sync first if not)
-- Task files in `sessions/tasks/` with YAML frontmatter
+# Get cache summary
+python scripts/read_cache.py
+
+# List unlinked issues only
+python scripts/read_cache.py --unlinked
+```
+
+## Quick Workflow
+
+```bash
+python scripts/discover.py --tasks-dir sessions/tasks --status-check
+```
+
+Output:
+```json
+{
+  "unlinked_issues": {"CCPRISM-25": {"name": "Fix Bug", "state": "Todo"}},
+  "unlinked_tasks": [{"file": "m-task.md", "status": "pending"}],
+  "status_mismatches": [{"issue": "CCPRISM-27", "task_status": "pending", "plane_state": "In Progress"}],
+  "summary": {"unlinked_issues": 5, "unlinked_tasks": 2, "mismatches": 1}
+}
+```
 
 ## Instructions
 
-When invoked, perform these steps:
+### 1. Run Discovery
 
-### 1. Load Plane Cache
-
-Read `.claude/plane-sync.json`. If not found:
-```
-No Plane cache found. Run plane-sync first to fetch issues.
-```
-
-### 2. Scan Local Tasks
-
-Find all task files in `sessions/tasks/`:
 ```bash
-ls sessions/tasks/*.md
+python scripts/discover.py --tasks-dir sessions/tasks --status-check
 ```
 
-For each task file, parse YAML frontmatter looking for:
-- `plane_issue: PROJ-XX` field (linked)
-- `status` field (for comparison)
-- `name` field (for display)
-
-### 3. Build Comparison
-
-Create two lists:
-
-**Plane issues not linked locally:**
-- Issues in cache where identifier not in any task's `plane_issue` field
-
-**Local tasks not linked to Plane:**
-- Task files without `plane_issue` field in frontmatter
-
-### 4. Display Results
-
-Format output as:
+### 2. Report Results
 
 ```
-Plane Issues Not Linked Locally:
-  CCPRISM-25  Fix Asciinema Regression         Todo
-  CCPRISM-24  Markdown-to-ANSI Parsing         Backlog
-  CCPRISM-17  Agent Visualization Modes        Todo
-  ... (N more)
+Plane ↔ Tasks Discovery
 
-Local Tasks Not in Plane:
-  m-implement-plane-integration.md    in_progress
-  s-fix-something.md                  pending
-  ... (N more)
+Unlinked Plane Issues (5):
+  CCPRISM-25: Fix Asciinema Regression (Todo)
+  CCPRISM-26: Test sync workflow (Backlog)
 
-Summary:
-  Plane issues without local task: X
-  Local tasks without Plane link: Y
-  Linked tasks: Z
+Unlinked Local Tasks (2):
+  m-implement-feature.md (pending)
+  m-another-task.md (in_progress)
+
+Status Mismatches (1):
+  CCPRISM-27: task=pending, plane=In Progress
+
+Actions:
+  - Use plane-link to connect issue ↔ task
+  - Use plane-create to create missing items
 ```
 
-### 5. Optional: Suggest Actions
+### 3. Suggest Actions
 
-If user asks, offer next steps:
-- "Use plane-link to connect existing task to issue"
-- "Use plane-create to create task from issue (or vice versa)"
-
-## Matching Logic
-
-Tasks are considered linked when:
-- Task frontmatter contains `plane_issue: PROJ-XX`
-- The identifier matches an issue in the cache
-
-Do NOT match by name/title - only explicit `plane_issue` field counts as linked.
+- **Unlinked issues** → offer plane-create (issue → task)
+- **Unlinked tasks** → offer plane-create (task → issue)
+- **Status mismatches** → offer to sync status
 
 ## Cache Freshness
 
-Check `lastSync` timestamp in cache. If older than 1 hour, suggest:
+Check `last_sync` from `read_cache.py`. If stale:
 ```
 Cache is X hours old. Run plane-sync to refresh.
 ```
-
-## Output Modes
-
-**Default**: Show summary counts and first 5 items per category
-**Verbose** (if user asks "show all"): List all items
-
-## Error Handling
-
-- Missing cache: "Run plane-sync first"
-- No tasks directory: "No sessions/tasks/ directory found"
-- Parse errors: Skip file and note in output

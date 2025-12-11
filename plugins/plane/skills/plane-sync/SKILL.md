@@ -5,116 +5,76 @@ description: Sync Plane.so issues to local cache. Use when user says "sync plane
 
 # Plane Sync Skill
 
-Fetches all issues from a Plane.so project and caches them locally in `.claude/plane-sync.json`.
+Fetches all issues from a Plane.so project and caches them locally.
 
-## When to Use
+## Bundled Scripts
 
-- User asks to sync/refresh Plane issues
-- Before running plane-discover to compare local vs remote
-- After making changes in Plane UI to update local cache
+```bash
+# Get cache summary (no full file read)
+python scripts/read_cache.py
 
-## Prerequisites
+# Update cache with MCP data (pipe JSON)
+echo '{"project": {...}, "issues": [...], "states": [...]}' | python scripts/sync_cache.py
 
-- Plane MCP server configured (`.mcp.json` with `plane` server)
-- `PLANE_API_KEY` environment variable set
-- Project exists in Plane workspace
+# Just update timestamp
+python scripts/sync_cache.py --touch
+```
+
+## Quick Workflow
+
+```bash
+# 1. Check current cache status
+python scripts/read_cache.py
+
+# 2. Fetch from Plane MCP, pipe to sync script
+# (MCP calls return JSON, pipe directly)
+```
 
 ## Instructions
 
-When invoked, perform these steps:
-
-### 1. Detect Project Context
-
-Check for existing `.claude/plane-sync.json` to get project info. If not found, use MCP to list projects:
-
-```
-mcp__plane__get_projects
-```
-
-If multiple projects, ask user which to sync. For single project, use it automatically.
-
-### 2. Fetch Project Data
-
-Get all issues and states from the project:
-
-```
-mcp__plane__list_project_issues (project_id)
-mcp__plane__list_states (project_id)
-```
-
-### 3. Build Cache Structure
-
-Create/update `.claude/plane-sync.json` with this structure:
-
-```json
-{
-  "project": {
-    "id": "uuid",
-    "identifier": "PROJ",
-    "name": "Project Name",
-    "workspace": "workspace-slug"
-  },
-  "states": {
-    "backlog": "state-uuid",
-    "pending": "state-uuid",
-    "in_progress": "state-uuid",
-    "completed": "state-uuid"
-  },
-  "issues": {
-    "PROJ-1": {
-      "id": "issue-uuid",
-      "name": "Issue title",
-      "state": "Todo",
-      "state_id": "state-uuid",
-      "priority": "none",
-      "updated_at": "2025-12-11T..."
-    }
-  },
-  "linked": {},
-  "lastSync": "2025-12-11T12:00:00Z"
-}
-```
-
-### 4. State Mapping
-
-Map Plane state groups to task status conventions:
-- `backlog` group → `backlog`
-- `unstarted` group → `pending`
-- `started` group → `in_progress`
-- `completed` group → `completed`
-- `cancelled` group → `cancelled`
-
-### 5. Write Cache File
-
-Ensure `.claude/` directory exists, then write the JSON cache:
+### 1. Check Existing Cache
 
 ```bash
-mkdir -p .claude
+python scripts/read_cache.py
 ```
 
-Write the formatted JSON to `.claude/plane-sync.json`.
+If cache exists, you'll get project_id. If not, fetch projects via MCP.
 
-### 6. Report Results
+### 2. Fetch Data via MCP
 
-Output summary:
-- Project synced: {identifier} ({name})
-- Issues cached: {count}
-- States mapped: {count}
-- Last sync: {timestamp}
+```
+mcp__plane__get_projects              # Get project list
+mcp__plane__list_project_issues       # Get all issues
+mcp__plane__list_states               # Get state mappings
+```
 
-## Output Format
+### 3. Pipe to Sync Script
 
-Keep output concise:
+Combine MCP responses into single JSON and pipe:
+
+```bash
+python scripts/sync_cache.py --data '{
+  "project": {"id": "...", "identifier": "CCPRISM", "name": "cc-prism", "workspace": "tinymade"},
+  "issues": [...],
+  "states": [...]
+}'
+```
+
+Output:
+```json
+{"success": true, "issues_count": 27, "states_count": 7, "new": ["CCPRISM-27"], "updated": []}
+```
+
+### 4. Report
 
 ```
 Synced CCPRISM (cc-prism)
-  25 issues cached
+  27 issues cached (+1 new)
   7 states mapped
-  .claude/plane-sync.json updated
 ```
 
 ## Error Handling
 
-- If Plane MCP not available: "Plane MCP server not configured. Add to .mcp.json first."
-- If no projects found: "No projects found in workspace."
-- If API error: Report the error message from MCP response.
+- No Plane MCP: "Plane MCP server not configured"
+- No projects: "No projects found in workspace"
+- API error: Report MCP error message

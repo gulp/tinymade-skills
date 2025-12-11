@@ -5,93 +5,80 @@ description: Create Plane issue from task or task from issue. Use when user says
 
 # Plane Create Skill
 
-Creates a new Plane issue from a local task, or creates a new local task from a Plane issue.
+Creates Plane issue from task, or task from Plane issue.
 
-## When to Use
+## Bundled Scripts
 
-- User has local task that needs corresponding Plane issue
-- User wants to start work on a Plane issue locally
-- After plane-discover shows items needing creation
+```bash
+# Get cache/project info
+python scripts/read_cache.py
 
-## Prerequisites
+# Get specific issue details
+python scripts/read_cache.py --issue CCPRISM-25
 
-- `.claude/plane-sync.json` exists with project info
-- Plane MCP server available for issue creation
-- Task template available (if creating task from issue)
+# Add new issue to cache after MCP creation
+python scripts/add_issue.py --key CCPRISM-28 --id UUID --name "Title" --state "In Progress" --state-id UUID
 
-## Instructions
-
-### Mode Detection
-
-Determine direction from user request:
-- "create issue from task" / "add to plane" → Task → Plane
-- "create task from issue" / "start PROJ-XX" → Plane → Task
-
-### Mode 1: Task → Plane Issue
-
-User provides task file or current task context.
-
-#### 1. Read Task File
-
-Parse frontmatter for:
-- `name` → Issue title
-- `status` → Initial state
-- Content under `## Problem/Goal` → Issue description
-
-#### 2. Create Plane Issue
-
-```
-mcp__plane__create_issue
-  project_id: (from cache)
-  issue_data:
-    name: (from task name/title)
-    description_html: "<p>description from task</p>"
-    state: (mapped from task status)
+# Add link after creation
+python scripts/add_link.py --issue CCPRISM-28 --task m-new-task.md
 ```
 
-#### 3. Link Back
+## Mode 1: Task → Plane Issue
 
-Add `plane_issue: PROJ-XX` to task frontmatter (use plane-link logic).
+### Workflow
 
-#### 4. Update Cache
+```bash
+# 1. Get project info from cache
+python scripts/read_cache.py
+# → project_id, state UUIDs
 
-Add issue to cache and linked mapping.
+# 2. Create issue via MCP
+mcp__plane__create_issue(project_id, {name, description_html, state})
 
-#### 5. Report
+# 3. Add to cache
+python scripts/add_issue.py --key CCPRISM-28 --id UUID --name "Title" --state "In Progress" --state-id UUID
 
-```
-Created Plane issue:
-  CCPRISM-26: Implement Feature X
+# 4. Link
+python scripts/add_link.py --issue CCPRISM-28 --task m-task.md
 
-Task linked: m-implement-feature-x.md
-```
-
-### Mode 2: Plane Issue → Task
-
-User provides issue identifier (e.g., CCPRISM-25).
-
-#### 1. Fetch Issue Details
-
-If not in cache, fetch from API:
-```
-mcp__plane__get_issue_using_readable_identifier
-  project_identifier: CCPRISM
-  issue_identifier: 25
+# 5. Update task frontmatter (Edit tool)
+# Add: plane_issue: CCPRISM-28
 ```
 
-#### 2. Generate Task Filename
+### Instructions
 
-Convert issue name to task filename:
-- Lowercase
-- Replace spaces with hyphens
-- Add size prefix based on estimate (default: m-)
-- Example: "Fix Asciinema Regression" → `m-fix-asciinema-regression.md`
+1. Parse task frontmatter for name, status, description
+2. Map status to Plane state UUID (from cache)
+3. Create issue via MCP
+4. Add to cache and link
+5. Update task frontmatter
 
-Ask user to confirm or modify filename.
+## Mode 2: Plane Issue → Task
 
-#### 3. Create Task File
+### Workflow
 
-Use task template or minimal structure:
+```bash
+# 1. Get issue details
+python scripts/read_cache.py --issue CCPRISM-25
+# → name, state, id
+
+# 2. Generate task filename
+# "Fix Asciinema Regression" → m-fix-asciinema-regression.md
+
+# 3. Create task file (Write tool)
+
+# 4. Add link
+python scripts/add_link.py --issue CCPRISM-25 --task m-fix-asciinema-regression.md
+```
+
+### Instructions
+
+1. Get issue from cache (or fetch via MCP if not cached)
+2. Generate filename: lowercase, hyphenate, add size prefix
+3. Create task file with frontmatter including `plane_issue`
+4. Add link to cache
+
+## Task Template
 
 ```markdown
 ---
@@ -105,53 +92,23 @@ created: 2025-12-11
 # Fix Asciinema Regression
 
 ## Problem/Goal
-{issue description from Plane}
+{issue description}
 
 ## Success Criteria
-- [ ] {derived from issue or ask user}
+- [ ] {from issue or ask user}
 
 ## Context Manifest
 <!-- To be gathered during task startup -->
 
-## User Notes
-
 ## Work Log
-- [{date}] Task created from Plane issue CCPRISM-25
-```
-
-#### 4. Update Cache
-
-Add to linked mapping in `.claude/plane-sync.json`.
-
-#### 5. Report
-
-```
-Created task file:
-  sessions/tasks/m-fix-asciinema-regression.md
-
-Linked to: CCPRISM-25 (Fix Asciinema Regression)
+- [{date}] Created from CCPRISM-25
 ```
 
 ## State Mapping
 
-When creating, map status/state:
-
-| Task Status | Plane State |
-|-------------|-------------|
-| `pending` | Todo |
-| `in_progress` | In Progress |
-| `completed` | Done |
-| `backlog` | Backlog |
-
-## Validation
-
-- Check issue/task doesn't already exist before creating
-- Validate project_id is available
-- Confirm filename doesn't conflict with existing task
-
-## Error Handling
-
-- Task already has plane_issue: "Task already linked. Use plane-link to change."
-- Issue already linked: "Issue already has local task: {filename}"
-- API error: Report error message from MCP
-- Missing project context: "Run plane-sync first to set project context"
+| Task Status | Plane State | Get UUID from |
+|------------|-------------|---------------|
+| pending | Todo | `states.pending` |
+| in_progress | In Progress | `states.in_progress` |
+| completed | Done | `states.completed` |
+| backlog | Backlog | `states.backlog` |

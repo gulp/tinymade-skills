@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "para": {
+      "command": "node",
+      "args": [
+        "/home/gulp/mcp-servers/para/mcp-server-ts/build/para-mcp-server.js"
+      ]
+    },
+    "exa": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.exa.ai/mcp?exaApiKey=ba058123-652d-4ac1-82a1-c748550b136a"
+      ]
+    }
+  }
+}
