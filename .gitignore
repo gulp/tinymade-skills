@@ -10,3 +10,9 @@ sessions/.archived/
 .para/*
 !.para/Dockerfile.custom
 !.para/config.json
+
+# Local environment
+.envrc
+
+# Serena cache
+.serena/
