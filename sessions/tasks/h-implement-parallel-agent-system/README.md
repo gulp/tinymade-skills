@@ -1,0 +1,784 @@
+---
+name: h-implement-parallel-agent-system
+branch: feature/parallel-agent-system
+status: pending
+created: 2025-12-10
+---
+
+# Parallel Agent System for cc-sessions
+
+## Problem/Goal
+
+cc-sessions currently lacks infrastructure for orchestrating multiple parallel Claude agents. When using worktree-orchestrator to spawn agents, the orchestrator has no visibility into:
+- What agents are currently working on
+- Whether agents are blocked or need help
+- Test status across all agents
+- Progress through task todos
+
+This task implements a cc-sessions-native parallel agent coordination system inspired by [para](https://github.com/2mawi2/para) and [Anthropic's long-running agent harness patterns](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents).
+
+## Success Criteria
+
+### Core Functionality
+- [ ] `sessions status "task" --tests X --todos Y/Z` CLI command works from any worktree
+- [ ] Status persists to `.sessions/state/{task}.status.json` with atomic writes
+- [ ] `sessions status show [--json]` displays all agent statuses from orchestrator
+- [ ] `sessions monitor` TUI shows real-time agent status (active/idle/blocked/stale)
+
+### Skills
+- [ ] Agent-status skill auto-loaded in spawned agent contexts (worktrees)
+- [ ] Orchestrator-coordination skill provides status reading for main branch context
+- [ ] Skills integrate with existing worktree-orchestrator spawn flow
+
+### Integration
+- [ ] worktree-orchestrator `spawn_terminal.py` injects status reporting instructions
+- [ ] Status updates visible within 2 seconds of agent reporting
+- [ ] TUI supports intervention actions (resume, cancel, view logs)
+
+### Quality
+- [ ] Python implementation (consistent with cc-sessions codebase)
+- [ ] TUI uses `textual` or `rich` (Python ecosystem)
+- [ ] Works with existing cc-sessions task file workflow
+
+## Subtasks
+
+| Subtask | Description | Status |
+|---------|-------------|--------|
+| `01-status-protocol.md` | CLI (`sessions status`) + JSON persistence layer | pending |
+| `02-agent-status-skill.md` | Skill for spawned agents to report status | pending |
+| `03-sessions-monitor-tui.md` | Human-in-the-loop TUI dashboard | pending |
+| `04-orchestrator-skill.md` | Skill for orchestrators to read agent status | pending |
+| `05-integration.md` | Wire into worktree-orchestrator, test E2E | pending |
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│              cc-sessions Parallel Agent System                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  ORCHESTRATOR LAYER (main branch)                                   │
+│  ├── worktree-orchestrator skill    ← Spawning (existing)           │
+│  ├── orchestrator-coordination skill ← Status reading (NEW)         │
+│  └── sessions monitor               ← TUI (NEW CLI)                 │
+│                                                                     │
+│  PERSISTENCE LAYER                                                  │
+│  └── .sessions/state/               ← Status files (NEW)            │
+│      ├── {task-name}.status.json                                    │
+│      └── summary.json                                               │
+│                                                                     │
+│  AGENT LAYER (worktrees)                                            │
+│  ├── agent-status skill             ← Status reporting (NEW)        │
+│  └── sessions status CLI            ← Simple command (NEW)          │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## Key Design Decisions
+
+1. **cc-sessions-native** (not para wrapper) - unified workflow, task file integration
+2. **Status protocol mirrors para** - `sessions status "task" --tests X --todos Y/Z`
+3. **JSON persistence** - `.sessions/state/{task}.status.json` for cross-agent state
+4. **TUI with textual/rich** - Python ecosystem, human-in-the-loop monitoring
+5. **Skills for both roles** - agent-side reporting skill, orchestrator-side reading skill
+
+## Reference Materials
+
+- Para source: `/home/gulp/mcp-servers/para/`
+- Para status protocol: `src/core/status.rs`
+- Para monitor TUI: `src/ui/monitor/`
+- Para agent template: `src/templates/claude_local.md`
+- **Para workflow state machines**: `docs/WORKFLOW.md` - Critical reference for session lifecycle
+- Anthropic article: https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents
+- Autonomous coding quickstart: https://github.com/anthropics/claude-quickstarts/tree/main/autonomous-coding
+
+## State Machine Architecture (from Para WORKFLOW.md)
+
+The parallel agent system should implement a state machine similar to para's session lifecycle:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle: sessions ready
+
+    Idle --> Spawning: orchestrator spawns agent
+    Spawning --> Active: worktree + state configured
+    Active --> Working: agent begins task
+
+    Working --> Reporting: agent calls sessions status
+    Reporting --> Working: status persisted
+
+    Working --> Finishing: agent completes task
+    Working --> Blocked: agent needs help
+    Working --> Stale: no status update > threshold
+
+    Blocked --> Working: orchestrator intervenes
+    Stale --> Working: agent resumes reporting
+
+    Finishing --> Completed: work merged/reviewed
+    Completed --> Idle: cleanup
+```
+
+**Key State Transitions for cc-sessions:**
+
+| State | Entry Condition | Exit Condition | Persisted In |
+|-------|----------------|----------------|--------------|
+| Idle | System ready | `spawn_terminal.py` invoked | - |
+| Spawning | Agent spawn initiated | `sessions-state.json` configured | worktree state |
+| Active | Worktree exists, state ready | Agent starts work | `.sessions/state/{task}.status.json` |
+| Working | Agent reporting status | Task complete/blocked/stale | status file |
+| Reporting | `sessions status` called | Status JSON written | status file |
+| Blocked | `--blocked` flag set | Orchestrator resumes | status file |
+| Stale | No update > threshold | Agent resumes | calculated |
+| Finishing | Agent calls finish | PR/merge complete | git branch |
+| Completed | All work done | Cleanup | task file status |
+
+**Error Handling States (from para):**
+
+```mermaid
+stateDiagram-v2
+    [*] --> Command
+    Command --> Validating: check prerequisites
+
+    Validating --> Error_NoTask: no active task in state
+    Validating --> Error_NoWorktree: not in worktree
+    Validating --> Success: all checks pass
+
+    Error_NoTask --> [*]: exit with guidance
+    Error_NoWorktree --> [*]: exit with guidance
+
+    Success --> Executing: proceed with status update
+    Executing --> Complete: status persisted
+    Executing --> Error_Runtime: write failure
+
+    Error_Runtime --> Retry: atomic write failed
+    Retry --> Complete: retry succeeded
+    Retry --> [*]: max retries exceeded
+
+    Complete --> [*]: success
+```
+
+**Design Principles from Para:**
+1. **Atomic transitions** - Commands complete fully or roll back
+2. **Session preservation** - Stale agents can be recovered
+3. **Explicit finalization** - Work requires explicit finish to prevent loss
+4. **Worktree isolation** - Each agent operates in separate context
+5. **Two-phase validation** - Prerequisites checked before execution
+
+## Context Manifest
+
+### How cc-sessions Currently Works: CLI, State Management, and Task Execution Flow
+
+The cc-sessions framework is a Node.js-based task workflow system that enforces Discussion-Alignment-Implementation-Check (DAIC) mode switching through a combination of CLI commands, state management, and file-based locking. Understanding this architecture is critical because our parallel agent system must integrate seamlessly with these existing patterns without breaking the atomic state guarantees or the mode enforcement logic.
+
+**CLI Command Routing Architecture:**
+
+When a developer or Claude types `sessions <command>`, execution flows through a three-tier architecture. The entry point is `/home/gulp/projects/tinymade-skills/sessions/bin/sessions`, a simple bash wrapper that executes `node sessions/api/index.js "$@"`. This wrapper ensures the sessions CLI can be invoked from anywhere in the project.
+
+The `index.js` file (lines 16-59) serves as argument parser and error handler. It extracts two special flags before command routing: `--json` (for machine-readable output) and `--from-slash` (indicating invocation from Claude Code's slash command interface). After filtering these flags, it passes the command name and remaining arguments to `routeCommand()` in `router.js`.
+
+The router (lines 161-240) maintains a `COMMAND_HANDLERS` object mapping command names to their handler functions. Currently registered commands include: `protocol`, `state`, `mode`, `flags`, `status`, `version`, `config`, `todos`, `tasks`, and `uninstall`. The `status` command currently maps to `handleStatusCommand` in `state_commands.js` (lines 648-689), which returns a human-readable summary of the CURRENT session's state. This is NOT agent status reporting - it shows mode, task name, todo progress, and context warnings for the local Claude instance only. For our parallel agent system, we need to ADD a new command (or extend this one) to handle cross-agent status coordination.
+
+**Critical Insight for Implementation:** The router supports both direct CLI invocation and slash command invocation (`/sessions`). When `fromSlash=true`, errors are caught and converted to help messages rather than thrown exceptions. Our new agent status commands must support both modes.
+
+**State Management and Atomic Writes - The Foundation of Coordination:**
+
+All cc-sessions state lives in `sessions/sessions-state.json`. This file is managed exclusively through `sessions/hooks/shared_state.js`, which provides the critical `editState(callback)` function (lines 929-949). This function is the ONLY safe way to modify state, and understanding its guarantees is essential for our status protocol.
+
+The atomic write sequence works like this:
+
+1. **Lock acquisition** (via `acquireLock()` lines 777-860): Creates a lock directory at `sessions/sessions-state.json.lock` using `fs.mkdirSync()` with `recursive: false`, which is atomic on POSIX systems. The lock directory contains a `lock_info.json` file with the owning process PID, timestamp, and hostname.
+
+2. **Stale lock detection**: Before blocking, the function checks if an existing lock is stale (older than 30 seconds default) or if the owning process is dead (using `process.kill(pid, 0)` probe on Unix). This prevents deadlocks from crashed processes.
+
+3. **Fresh state reload**: After acquiring the lock, `loadState()` is called to read the LATEST file contents. This ensures we're modifying the most recent state, not a stale copy.
+
+4. **Callback execution**: The user's modification callback runs synchronously against the fresh state object.
+
+5. **Atomic write** (via `atomicWrite()` lines 753-775): Writes to a temporary file with unique PID suffix (`sessions-state.json.tmp.{process.pid}`), calls `fsyncSync()` to flush kernel buffers to disk, then uses `fs.renameSync()` for atomic replacement. On POSIX systems, rename is guaranteed atomic.
+
+6. **Lock release**: The lock directory is removed via `fs.rmSync()`.
+
+**Why This Matters for Agent Status:** When agents in different worktrees report status, they'll be writing to `.sessions/state/{task}.status.json` files in the MAIN repository (not their local worktree). These status files are READ by the orchestrator and monitor. We MUST use the same atomic write pattern (temp file + fsync + rename) to prevent corruption when multiple agents report simultaneously. However, we DON'T need the directory-based locking because each agent writes to its OWN status file (keyed by task name), so there's no conflict.
+
+**SessionsState Structure - What's Tracked Per-Agent:**
+
+The `SessionsState` class (lines 608-716) defines what each Claude instance knows about itself:
+
+- `version`: Package version (from package.json)
+- `current_task`: TaskState object with `name`, `file` (relative path from sessions/tasks/), `branch`, `status` (pending/in-progress/completed), `created`, `started`, `updated`, `dependencies`, `submodules`
+- `active_protocol`: Which protocol is running (task-creation, task-startup, task-completion, context-compaction, or null)
+- `api`: APIPerms with flags controlling which operations are allowed
+- `mode`: Either "discussion" or "implementation" - this controls DAIC enforcement
+- `todos`: SessionsTodos with `active` and `stashed` arrays of CCTodo objects (content, status, activeForm)
+- `model`: "opus", "sonnet", or "unknown"
+- `flags`: SessionsFlags with `context_85`, `context_90`, `subagent`, `noob`, `bypass_mode`
+- `metadata`: Free-form object for protocol-specific data
+
+**Key Insight:** Each worktree has its own `sessions-state.json` file. When spawn_terminal.py launches an agent, it modifies the worktree's state file BEFORE Claude starts, setting `mode: "implementation"` and `bypass_mode: true` to enable autonomous work. This is why agents can't see each other's state - they're looking at different files. Our status protocol must bridge this gap by having agents write to a SHARED location in the main repo.
+
+**Task File Format and Discovery:**
+
+Task files live in `sessions/tasks/` and use YAML-like frontmatter between `---` delimiters. The `TaskState.loadTask()` function (lines 410-458) parses this by:
+
+1. Finding the first `---` at position 0 (must be at file start)
+2. Finding the closing `---`
+3. Splitting the content between them by newlines
+4. For each line containing `:`, splitting on the first colon to get key-value pairs
+5. Special handling: `task:` field maps to `name` for legacy compatibility, `submodules:` or `modules:` are parsed as comma-separated lists
+
+Task files can be either single `.md` files (e.g., `m-implement-auth.md`) or directories with `README.md` (e.g., `h-parallel-agents/README.md`). The directory pattern supports subtasks like `h-parallel-agents/01-status-protocol.md`.
+
+Worktree-orchestrator includes a helper script `parse_task.py` that extracts frontmatter and adds computed fields like `folder` (branch name with slashes converted to hyphens) and `worktree_path` (`.trees/{folder}`). This script is used by the orchestrator to map tasks to worktree locations.
+
+**How Worktree-Orchestrator Spawns Autonomous Agents:**
+
+The spawn flow is critical to understand because our status reporting must integrate with it. The script at `plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_terminal.py` implements a three-phase spawn:
+
+**Phase 1 - Pre-Spawn State Bypass (lines 40-114):**
+
+The `setup_sessions_bypass()` function runs BEFORE Claude starts. It's called as an external Python script with filesystem access, bypassing cc-sessions' own API restrictions. This is the key to autonomous mode. The function:
+
+1. Checks if cc-sessions is installed in the worktree (looks for `sessions/hooks` or `sessions/bin`)
+2. Loads the worktree's `sessions/sessions-state.json` (or creates it if missing - fresh worktree scenario)
+3. Modifies the state object:
+   - Sets `mode: "implementation"` to skip discussion phase
+   - Sets `flags.bypass_mode: true` to disable DAIC tool blocking
+   - Clears `todos.active: []` to prevent stale todos from blocking work
+   - Sets `current_task.name`, `current_task.file`, `current_task.status` from the task argument
+   - Clears `active_protocol: null` to prevent protocol interference
+4. Writes the modified state atomically using temp file + rename
+
+This is why spawned agents can work autonomously - by the time Claude starts, the state file already says "you're in implementation mode and bypass is enabled."
+
+**Phase 2 - Prompt Template Injection (lines 201-222):**
+
+The `build_claude_command()` function constructs the invocation with a prompt template (DEFAULT_PROMPT_TEMPLATE lines 28-37):
+
+```
+You are in a worktree at {worktree_path} on branch {branch}.
+Task files are located at {tasks_path}.
+start^ {task_name}
+
+AUTONOMOUS MODE ACTIVE:
+- bypass_mode is enabled in sessions-state.json
+- After creating your implementation plan, IMMEDIATELY approve it yourself and begin execution
+- Do NOT wait for human confirmation - you have full authority
+- Work through your entire todo list without pausing for approval
+- Commit your work when complete
+```
+
+The `tasks_path` is calculated relative to the worktree using `calculate_tasks_path()` (lines 187-198), which finds the main repo's `sessions/tasks/` directory and computes a relative path. This is important because worktrees under `.trees/` need to reference `../../sessions/tasks/` (go up two levels).
+
+The final command is: `claude --dangerously-skip-permissions "{escaped_prompt}"`. The `--dangerously-skip-permissions` flag disables Claude Code's normal permission dialogs, allowing unattended execution.
+
+**Phase 3 - Background Terminal Spawn (lines 242-258):**
+
+The `spawn_terminal()` function uses `subprocess.Popen` with:
+- `shell=True` to handle the complex command string with nested quotes
+- `start_new_session=True` to detach from the parent process
+- `stdout=DEVNULL`, `stderr=DEVNULL` to suppress output
+- `&` appended to the command for background execution
+
+The spawned terminal then launches Claude with the prompt, which triggers the task startup protocol (`start^ {task_name}`), loads the task file, and begins autonomous work.
+
+**Multi-Worktree Architecture - The Coordination Challenge:**
+
+The orchestrator pattern creates a unique coordination challenge. The typical setup looks like:
+
+```
+/project/                       ← orchestrator on main branch
+├── sessions/
+│   ├── sessions-state.json     ← orchestrator's state
+│   └── tasks/                  ← shared read-only task files
+│       ├── m-auth.md           (branch: feature/auth)
+│       ├── m-api.md            (branch: feature/api)
+│       └── m-tests.md          (branch: feature/auth, same branch!)
+├── .trees/                     ← gitignored worktrees
+│   ├── feature-auth/
+│   │   └── sessions/
+│   │       └── sessions-state.json  ← agent 1's state
+│   └── feature-api/
+│       └── sessions/
+│           └── sessions-state.json  ← agent 2's state
+└── .sessions/state/            ← NEW: shared status directory
+    ├── m-auth.status.json
+    ├── m-api.status.json
+    └── m-tests.status.json
+```
+
+Key insights:
+
+1. **Multiple tasks can share one branch/worktree** - Both `m-auth.md` and `m-tests.md` might have `branch: feature/auth`, so they'd share the `.trees/feature-auth/` worktree. The orchestrator decides which task to spawn in that worktree.
+
+2. **Task files are shared but state files are isolated** - All agents read from the main repo's `sessions/tasks/`, but each worktree has its own `sessions-state.json`. This is why agents can't see each other.
+
+3. **The orchestrator can read any worktree** - The orchestrator (on main branch) can do `cat .trees/feature-auth/src/auth.ts` to peek at work in progress.
+
+4. **Our status protocol bridges the gap** - We're creating `.sessions/state/{task}.status.json` files in the MAIN repo that agents write to and the orchestrator reads from. This shared state enables coordination.
+
+### How Worktrees Work with cc-sessions: Multi-Branch Task Pattern
+
+The worktree-orchestrator enables a powerful pattern where **multiple tasks can share one branch and worktree**. The architecture looks like:
+
+```
+/project/                          ← orchestrator (main branch)
+├── .trees/                        ← gitignored worktrees
+│   ├── feature-auth/              ← worktree for auth tasks
+│   └── feature-api/               ← worktree for api tasks
+└── sessions/tasks/
+    ├── m-implement-auth.md             ← branch: feature/auth
+    ├── m-implement-auth-tests.md       ← branch: feature/auth (same branch!)
+    └── m-implement-api.md              ← branch: feature/api
+```
+
+The orchestrator (developer on main branch) can:
+- Read files from any worktree: `cat .trees/feature-auth/src/auth.ts`
+- Parse task files: `python scripts/parse_task.py sessions/tasks/m-implement-auth.md`
+- Check worktree status: `python scripts/worktree_status.py sessions/tasks`
+- Spawn agents: `python scripts/spawn_terminal.py --worktree .trees/feature-auth --task m-implement-auth`
+
+Each worktree has its own `sessions-state.json`, but task files are shared read-only from the main repo. When spawn_terminal.py creates a fresh worktree, it initializes or modifies the sessions-state.json in that worktree to enable autonomous mode.
+
+**Bundled Python Scripts:**
+
+The worktree-orchestrator includes several deterministic Python scripts:
+
+- `parse_task.py`: Extracts frontmatter from task files, returns JSON with name, branch, folder, status
+- `list_tasks_by_branch.py`: Groups tasks by branch name, returns JSON mapping branches to task lists
+- `worktree_status.py`: Lists all git worktrees with their associated tasks
+- `check_cleanup_safe.py`: Validates if a branch can be safely deleted (all tasks completed, no uncommitted changes)
+
+These scripts read task files and git metadata but don't modify state - they're pure query tools.
+
+### Para Status Protocol: Reference Implementation Pattern
+
+Para implements agent status reporting through a Rust-based CLI (`para status`) that persists to `.para/state/{session-name}.status.json` files. Here's the protocol design:
+
+**Status Data Structure** (`/home/gulp/mcp-servers/para/src/core/status.rs` lines 32-46):
+
+```rust
+pub struct Status {
+    pub session_name: String,
+    pub current_task: String,
+    pub test_status: TestStatus,  // Passed, Failed, Unknown
+    pub is_blocked: bool,
+    pub blocked_reason: Option<String>,
+    pub todos_completed: Option<u32>,
+    pub todos_total: Option<u32>,
+    pub diff_stats: Option<DiffStats>,  // +additions -deletions
+    pub last_update: DateTime<Utc>,
+}
+```
+
+**CLI Usage Pattern** (`src/cli/commands/status.rs` lines 20-119):
+
+Agents report status with: `para status "task description" --tests passed --todos 3/7 --blocked`
+
+The command:
+1. Auto-detects session name from current directory (or uses `--session` flag)
+2. Parses arguments: test_status enum, todos as "completed/total" fraction, blocked boolean
+3. Calculates diff stats by running git diff against parent branch
+4. Creates Status object and saves to `{state_dir}/{session_name}.status.json`
+
+**Atomic Persistence** (lines 110-156):
+
+Para uses this write pattern:
+1. Generate random temp file name: `{session_name}.status.tmp.{random_id}`
+2. Open temp file with exclusive lock (`FileExt::lock_exclusive`)
+3. Write JSON, sync to disk (`file.sync_all()`)
+4. Release lock (explicit drop)
+5. Atomic rename temp → final file
+
+This prevents corruption during concurrent writes from multiple agents.
+
+**Monitor Aggregation** (`Status::load_all()` lines 323-350):
+
+The monitor reads all `*.status.json` files from the state directory, filters by extension and filename pattern (`.status`), loads each via `Status::load()` which acquires a shared read lock. It builds a `StatusSummary` (lines 372-427) with:
+- Total/active/blocked/stale session counts
+- Test summary (passed/failed/unknown counts)
+- Overall progress percentage (sum of completed_todos / sum of total_todos)
+
+**Staleness Detection** (lines 316-320):
+
+Status files have `last_update` timestamps. The `is_stale()` function checks if `now - last_update >= stale_threshold_hours`. The monitor uses this to distinguish active agents (recently reported) from stale ones (crashed, finished but not cleaned up).
+
+### Para Monitor TUI: Real-Time Dashboard Architecture
+
+The para monitor is a Ratatui-based TUI (`/home/gulp/mcp-servers/para/src/ui/monitor/`) with these components:
+
+**File Structure:**
+- `mod.rs`: Main entry point, runs event loop
+- `state.rs`: MonitorState struct tracking sessions, sort order, selection
+- `renderer.rs`: Ratatui rendering logic (layouts, tables, progress bars)
+- `event_handler.rs`: Keyboard input handling (q=quit, r=resume, c=cancel, etc.)
+- `service.rs`: Background polling service that reloads status files
+- `coordinator.rs`: High-level coordination between service and UI
+- `actions.rs`: Action dispatcher for user commands
+- `cache.rs`: Caching layer to reduce filesystem reads
+
+**Event Loop Pattern:**
+
+1. Initialize MonitorState with initial status load
+2. Spawn background service thread that polls status files every N seconds
+3. Run main loop:
+   - Poll for keyboard events (non-blocking with timeout)
+   - Poll for status updates from background service
+   - Re-render UI on state change
+   - Dispatch actions (resume, cancel, view logs) via coordinator
+4. Clean shutdown on 'q' or Ctrl+C
+
+**Display Layout:**
+
+- Header: Overall summary (active/blocked/stale counts, test summary, overall progress)
+- Table: One row per session with columns for:
+  - Session name
+  - Current task description
+  - Test status (colored indicator)
+  - Progress bar (todos completed/total)
+  - Diff stats (+additions -deletions)
+  - Last update time
+  - Status indicator (active/idle/blocked/stale)
+- Footer: Keyboard shortcuts and help text
+
+**Intervention Actions:**
+
+The monitor supports human-in-the-loop interventions:
+- `r` (resume): Opens a terminal in the session's worktree
+- `c` (cancel): Kills the session process and cleans up worktree
+- `v` (view logs): Opens session logs in pager
+- `↑`/`↓`: Navigate between sessions
+- `q`: Quit monitor
+
+### Plugin/Skill System: How Skills Get Loaded
+
+The tinymade-skills repository uses a simple plugin structure:
+
+**Plugin Manifest** (`plugin.json`):
+
+```json
+{
+  "name": "plugin-name",
+  "description": "...",
+  "version": "1.0.0",
+  "author": {"name": "..."},
+  "keywords": [...],
+  "skills": ["./skills/"],
+  "commands": ["./commands/"],
+  "agents": ["./agents/"]
+}
+```
+
+**Skill Structure:**
+
+Each skill has:
+- `SKILL.md`: Main skill documentation loaded into Claude's context
+- `scripts/`: Executable scripts (Python, Bash, etc.) that skills reference
+- `references/`: Additional documentation for verbose guidance
+- `assets/`: Templates, config examples, etc.
+
+**Loading Mechanism:**
+
+When Claude Code loads, it reads the `plugins/` directory, parses `plugin.json` files, and dynamically loads skills based on the `skills` array. Each skill's `SKILL.md` is injected into Claude's system prompt, making the skill's commands and patterns available.
+
+The `SKILL.md` format (example from worktree-orchestrator):
+
+```markdown
+---
+name: skill-name
+description: When to auto-trigger, key phrases, integration points
+---
+
+# Skill Name
+
+Quick description
+
+## Bundled Scripts
+
+Executable tools with usage examples
+
+## Quick Decision Matrix
+
+Request-to-action mapping table
+
+## Core Workflows
+
+Step-by-step procedures with bash examples
+```
+
+Skills can reference their bundled scripts using relative paths: `python scripts/spawn_terminal.py --worktree X`.
+
+### What Needs to Connect: Integration Points for Parallel Agent System
+
+**1. New `sessions status` Command for Agents**
+
+We need to add a new command handler to `sessions/api/router.js` and `sessions/api/state_commands.js`. The current `handleStatusCommand` (state_commands.js lines 648-689) is for human-readable session summaries. We need a parallel command for **agent status reporting**:
+
+```javascript
+// New command: sessions status "task description" --tests passed --todos 3/7 --blocked
+// Should:
+// 1. Detect task name from current sessions-state.json
+// 2. Parse test status (passed/failed/unknown)
+// 3. Parse todos as "completed/total" fraction
+// 4. Capture blocked state and reason
+// 5. Calculate diff stats (git diff --numstat origin/main)
+// 6. Write to .sessions/state/{task-name}.status.json atomically
+```
+
+This mirrors para's update_status function but adapted to cc-sessions conventions.
+
+**2. Status File Schema and Location**
+
+We need to define a new directory: `.sessions/state/` (gitignored) at the repository root. Each agent writes `{task-name}.status.json` with this schema:
+
+```json
+{
+  "task_name": "string",
+  "current_work": "string description",
+  "test_status": "passed" | "failed" | "unknown",
+  "is_blocked": boolean,
+  "blocked_reason": "string" | null,
+  "todos_completed": number | null,
+  "todos_total": number | null,
+  "diff_stats": {
+    "additions": number,
+    "deletions": number
+  } | null,
+  "last_update": "ISO 8601 timestamp"
+}
+```
+
+The status files should use the same atomic write pattern as sessions-state.json (temp file + fsync + rename).
+
+**3. Agent-Status Skill for Worktree Agents**
+
+We need a new skill in `plugins/agent-status/` with:
+
+- `plugin.json`: Declares the skill for worktree agent contexts
+- `skills/agent-status/SKILL.md`: Documents the `sessions status` command with usage examples
+- `skills/agent-status/scripts/report_status.py`: Helper script for calculating diff stats
+
+The skill should be auto-loaded when Claude starts in a worktree (detected by presence of `.git` file pointing to main repo). The SKILL.md instructs agents to periodically report status:
+
+```markdown
+## Status Reporting Protocol
+
+Every 10-15 minutes (or after significant milestones), report your status:
+
+```bash
+sessions status "Implementing auth middleware" --tests passed --todos 3/7
+```
+
+If blocked, include the --blocked flag:
+
+```bash
+sessions status "Stuck on Redis connection pooling" --tests unknown --todos 2/5 --blocked
+```
+```
+
+**4. Orchestrator-Coordination Skill for Main Branch**
+
+We need another skill in `plugins/orchestrator-coordination/` with:
+
+- `skills/orchestrator-coordination/SKILL.md`: Documents status reading and monitoring commands
+- `skills/orchestrator-coordination/scripts/read_statuses.py`: Loads all status files, calculates summary
+
+This skill is for the orchestrator (developer on main branch) and provides:
+
+```bash
+# Show all agent statuses
+sessions status show --json
+
+# Show specific agent
+sessions status show m-implement-auth
+
+# Summary across all agents
+sessions status summary
+```
+
+**5. Sessions Monitor CLI and TUI**
+
+We need a new top-level command in `sessions/api/router.js`: `monitor`. This should:
+
+1. Load all status files from `.sessions/state/*.status.json`
+2. Calculate summary statistics (active/blocked/stale counts)
+3. Launch a Python TUI (using `textual` or `rich`) that:
+   - Displays real-time agent status in a table
+   - Shows progress bars, test status, diff stats
+   - Updates every 2 seconds (reload status files)
+   - Supports keyboard actions (view logs, resume terminal, cancel agent)
+   - Detects stale agents (no update in >30 minutes)
+
+The monitor should be implemented as `sessions/cli/monitor.py` and invoked via:
+
+```bash
+sessions monitor  # Launch TUI
+sessions monitor --json  # Output JSON for scripting
+```
+
+**6. Integration with spawn_terminal.py**
+
+The spawn_terminal.py script needs to inject status reporting instructions into the prompt template. Update DEFAULT_PROMPT_TEMPLATE (lines 28-37) to include:
+
+```
+Status Reporting:
+- Every 10-15 minutes, report status: sessions status "<description>" --tests <status> --todos X/Y
+- If blocked, add --blocked flag
+- The orchestrator monitors your status via `sessions monitor`
+```
+
+This ensures agents know they're part of a coordinated system.
+
+**7. Worktree Detection Logic**
+
+We need a helper function to detect if Claude is running in:
+- **Main repository**: `.git/` is a directory, no active worktree
+- **Worktree agent**: `.git` is a file containing `gitdir: ...` (worktree marker)
+- **Orchestrator mode**: Check for `.trees/` directory existence
+
+This determines which skills to auto-load (agent-status vs orchestrator-coordination).
+
+### Technical Reference Details
+
+#### New Command Signatures
+
+```javascript
+// sessions/api/state_commands.js
+function handleAgentStatusCommand(args, jsonOutput = false) {
+  // args: { task: string, tests: string, todos?: string, blocked?: boolean, session?: string }
+  // Returns: { success: boolean, message: string }
+}
+```
+
+```python
+# sessions/cli/monitor.py
+def main(json_mode: bool = False, state_dir: Path = None):
+    """Launch status monitor TUI or output JSON summary."""
+    if json_mode:
+        summary = load_status_summary(state_dir)
+        print(json.dumps(summary, indent=2))
+    else:
+        app = MonitorApp(state_dir)
+        app.run()
+```
+
+#### Status File Atomic Write Pattern
+
+```javascript
+// sessions/hooks/shared_state.js pattern (adapt for status files)
+function atomicWriteStatus(statusFilePath, statusObj) {
+    const tempFile = `${statusFilePath}.tmp.${process.pid}`;
+    fs.writeFileSync(tempFile, JSON.stringify(statusObj, null, 2), 'utf-8');
+    const fd = fs.openSync(tempFile, 'r+');
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fs.renameSync(tempFile, statusFilePath);
+}
+```
+
+#### Diff Stats Calculation
+
+```bash
+# Calculate additions and deletions vs origin/main
+git diff --numstat origin/main | awk '{add+=$1; del+=$2} END {print add, del}'
+```
+
+#### Status File Location Convention
+
+```
+/home/gulp/projects/tinymade-skills/
+├── .sessions/
+│   └── state/
+│       ├── m-implement-auth.status.json
+│       ├── m-implement-api.status.json
+│       └── summary.json  # Cached aggregate for monitor
+├── .trees/  # Git worktrees
+│   ├── feature-auth/
+│   └── feature-api/
+└── sessions/
+    ├── sessions-state.json  # Main repo state
+    └── tasks/  # Shared task files
+```
+
+Worktrees have their own `sessions/sessions-state.json` but status files always write to main repo's `.sessions/state/`.
+
+#### TUI Library Choice
+
+Use **textual** (Python) for the monitor TUI:
+- Async-first architecture (good for real-time updates)
+- Rich widget library (tables, progress bars, containers)
+- Easy keyboard handling and action dispatch
+- Cross-platform terminal support
+
+Alternative: **rich** with manual event loop (more low-level control).
+
+#### Skill Loading Detection
+
+```javascript
+// Detect context in sessions/hooks/shared_state.js or new helper
+function detectContext() {
+    const gitFile = path.join(PROJECT_ROOT, '.git');
+    const treesDir = path.join(PROJECT_ROOT, '.trees');
+
+    if (fs.existsSync(gitFile)) {
+        const stat = fs.statSync(gitFile);
+        if (stat.isFile()) {
+            // .git is a file → worktree agent
+            return 'worktree_agent';
+        } else if (fs.existsSync(treesDir)) {
+            // .git is dir + .trees exists → orchestrator
+            return 'orchestrator';
+        }
+        return 'main_repo';
+    }
+    return 'unknown';
+}
+```
+
+### Configuration Requirements
+
+**New Config Section for Status Reporting:**
+
+Add to `sessions/sessions-config.json`:
+
+```json
+{
+  "agent_status": {
+    "enabled": true,
+    "report_interval_minutes": 10,
+    "state_directory": ".sessions/state",
+    "stale_threshold_hours": 2
+  }
+}
+```
+
+**Environment Variables:**
+
+- `SESSIONS_STATE_DIR`: Override default `.sessions/state` location
+- `SESSIONS_MONITOR_REFRESH`: Monitor refresh interval in seconds (default: 2)
+
+### File Paths for Implementation
+
+**New Files to Create:**
+
+- `sessions/api/agent_status_commands.js` - Agent status CLI handlers
+- `sessions/cli/monitor.py` - TUI monitor application
+- `plugins/agent-status/plugin.json` - Agent-side plugin manifest
+- `plugins/agent-status/skills/agent-status/SKILL.md` - Agent status reporting skill
+- `plugins/agent-status/skills/agent-status/scripts/calc_diff_stats.py` - Diff calculation helper
+- `plugins/orchestrator-coordination/plugin.json` - Orchestrator plugin manifest
+- `plugins/orchestrator-coordination/skills/orchestrator-coordination/SKILL.md` - Status reading skill
+- `.sessions/state/` - Directory for status files (add to .gitignore)
+
+**Files to Modify:**
+
+- `sessions/api/router.js` - Add `agent-status` and `monitor` command handlers
+- `sessions/api/state_commands.js` - Add agent status reporting functions
+- `plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_terminal.py` - Update prompt template
+- `.gitignore` - Add `.sessions/state/`
+
+## User Notes
+<!-- Any specific notes or requirements from the developer -->
+
+## Work Log
+<!-- Updated as work progresses -->
+- [2025-12-10] Task created after deep investigation of para architecture

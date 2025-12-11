@@ -4,3 +4,15 @@ sessions/sessions-state.json
 sessions/package.json
 sessions/transcripts/
 sessions/.archived/
+.trees/
+# Para directories and state files
+# Ignore everything in .para except Dockerfile.custom and config.json
+.para/*
+!.para/Dockerfile.custom
+!.para/config.json
+
+# Local environment
+.envrc
+
+# Serena cache
+.serena/

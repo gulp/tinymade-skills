@@ -1,0 +1,10 @@
+{
+  "name": "worktree-orchestrator",
+  "description": "Git worktree management with cc-sessions integration for parallel task orchestration",
+  "version": "1.0.0",
+  "author": {
+    "name": "tinymade"
+  },
+  "keywords": ["git", "worktree", "orchestrator", "parallel", "tasks", "cc-sessions"],
+  "skills": ["./skills/"]
+}
