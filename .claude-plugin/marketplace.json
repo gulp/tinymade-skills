@@ -33,6 +33,14 @@
       "version": "1.0.0",
       "keywords": ["plane", "project-management", "tasks", "issues", "sync"],
       "category": "project-management"
+    },
+    {
+      "name": "gemini-offloader",
+      "source": "./plugins/gemini-offloader",
+      "description": "Offload context-heavy tasks to Google Gemini via gemini-cli with warm sessions and mem0 memory",
+      "version": "1.0.0",
+      "keywords": ["gemini", "context-offloading", "research", "mem0", "sessions"],
+      "category": "ai-tools"
     }
   ]
 }

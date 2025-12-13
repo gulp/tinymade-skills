@@ -1,0 +1,16 @@
+{
+  "name": "gemini-offloader",
+  "version": "1.0.0",
+  "description": "Offload context-heavy tasks to Google Gemini via gemini-cli with warm sessions and mem0 memory",
+  "author": {
+    "name": "tinymade"
+  },
+  "keywords": [
+    "gemini",
+    "context-offloading",
+    "research",
+    "mem0",
+    "sessions"
+  ],
+  "license": "MIT"
+}
