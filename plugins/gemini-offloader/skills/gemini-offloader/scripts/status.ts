@@ -60,12 +60,23 @@ async function checkAuthentication(): Promise<{ authenticated: boolean; method: 
     return { authenticated: true, method: "vertex_ai" };
   }
 
+  // Check for OAuth credentials file
+  const oauthCredsPath = join(homedir(), ".gemini", "oauth_creds.json");
+  if (existsSync(oauthCredsPath)) {
+    return { authenticated: true, method: "google_login" };
+  }
+
   // Check settings file for OAuth
   const settingsPath = join(homedir(), ".gemini", "settings.json");
   if (existsSync(settingsPath)) {
     try {
       const settings = await Bun.file(settingsPath).json();
-      if (settings.auth || settings.oauth || settings.selectedAuthMethod) {
+      if (
+        settings.auth ||
+        settings.oauth ||
+        settings.selectedAuthMethod ||
+        settings.security?.auth?.selectedType
+      ) {
         return { authenticated: true, method: "google_login" };
       }
     } catch {

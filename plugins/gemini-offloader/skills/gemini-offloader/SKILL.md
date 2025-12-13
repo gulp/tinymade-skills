@@ -169,6 +169,79 @@ bun run scripts/memory.ts add --user "research" --topic "topic" \
 | `rate limit exceeded` | Free tier: 60 req/min, 1000 req/day. Wait or use API key |
 | `mem0 not installed` | `bun add mem0ai` (requires OpenAI API key for embeddings) |
 | `session not found` | Use `session.ts list` to see available sessions |
+| `exit code 124` | Timeout - context too large or slow response. Chunk your input. |
+| `exit code 144` | Rate/quota throttling - wait 20-60s before retrying |
+| `command hangs` | gemini-cli needs stdin. Use: `echo "" \| gemini ...` |
+
+## Rate Limiting & Best Practices
+
+### Understanding Exit Codes
+
+**Exit 124 (Timeout)**: "You asked me to think too long"
+- Prompt or context is too large
+- Backend didn't respond within timeout
+- Common with large repos, long transcripts, deep reasoning requests
+
+**Exit 144 (Throttling)**: "Stop asking for a bit"
+- Hitting per-minute token or request limits
+- Rapid consecutive calls trigger this
+- Often follows a 124 when retrying immediately
+
+These aren't bugs—they're guardrails. Gemini is generous on paper (1M tokens) but conservative in execution.
+
+### Best Practices
+
+**1. Use Gemini as a compressor, not a deep thinker**
+```
+# Good: Summarization and compression
+"Summarize this codebase structure in 500 words"
+
+# Bad: Deep exhaustive analysis
+"Analyze every aspect of this repo comprehensively"
+```
+
+**2. Chunk aggressively**
+```bash
+# Instead of:
+bun run scripts/query.ts --prompt "analyze ./repo" --include-dirs ./repo
+
+# Do this:
+bun run scripts/query.ts --prompt "summarize ./repo/src" --include-dirs ./repo/src
+bun run scripts/query.ts --prompt "summarize ./repo/docs" --include-dirs ./repo/docs
+# Then reason over the summaries
+```
+
+**3. Cap reasoning explicitly**
+Add to your prompts:
+```
+Reason concisely.
+If context is large, summarize first.
+Avoid exhaustive analysis.
+Limit response to key points.
+```
+
+**4. Serialize calls (no bursts)**
+- Don't auto-retry on 124
+- Wait 20-60s after 144 before retrying
+- Avoid parallel requests to Gemini
+
+**5. Prefer multi-turn sessions for deep dives**
+```bash
+# Session 1: Get overview
+bun run scripts/session.ts create --name "research" --prompt "Overview of X"
+
+# Session 2: Drill down (context preserved, no re-upload)
+bun run scripts/session.ts continue --name "research" --prompt "Details on aspect Y"
+```
+
+### Mental Model
+
+| Task | Use Gemini For | Keep in Claude |
+|------|----------------|----------------|
+| Large doc | Summarize → return summary | Reason over summary |
+| Research | Gather facts, compress | Synthesize, decide |
+| Codebase | High-level overview | Detailed analysis, edits |
+| Multi-step | Each step independently | Orchestration logic |
 
 ## Installation
 
