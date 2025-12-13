@@ -30,6 +30,7 @@ import {
   type SessionMetadata,
   type OffloadMetadata
 } from "./state";
+import { indexOffload } from "./memory";
 
 interface SyncResult {
   success: boolean;
@@ -46,24 +47,7 @@ interface SyncResult {
   errors: string[];
 }
 
-async function checkMem0Available(): Promise<boolean> {
-  try {
-    const mem0 = await import("mem0ai");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function getMem0Memory() {
-  try {
-    const mem0Module = await import("mem0ai");
-    const Memory = mem0Module.default || mem0Module.Memory;
-    return new Memory();
-  } catch {
-    return null;
-  }
-}
+// mem0 availability is handled by indexOffload() which dispatches based on mode
 
 async function getAllCacheEntries(): Promise<Array<{
   projectHash: string;
@@ -167,30 +151,26 @@ async function rebuild(): Promise<SyncResult> {
   const errors: string[] = [];
   let indexed = 0;
   let skipped = 0;
-
-  const mem0Available = await checkMem0Available();
-  const memory = mem0Available ? await getMem0Memory() : null;
+  let mem0Indexed = false;
 
   // Get all cache entries
   const cacheEntries = await getAllCacheEntries();
   const sessionEntries = await getAllSessionEntries();
 
-  // Index cache entries
+  // Index cache entries using indexOffload (handles both hosted and local modes)
   for (const entry of cacheEntries) {
     try {
       const summary = await Bun.file(entry.summaryPath).text();
       const offloadMetadata = entry.metadata.offload_metadata;
 
-      if (memory) {
-        await memory.add(summary, {
-          user_id: "offloads",
-          metadata: offloadMetadata
-        });
+      const result = await indexOffload(summary, offloadMetadata);
+      if (result.mem0_indexed) mem0Indexed = true;
+      if (result.success) {
+        indexed++;
+      } else {
+        errors.push(`Cache ${entry.sourceHash}: ${result.error}`);
+        skipped++;
       }
-
-      // Always update local index as backup
-      await appendToLocalIndex(summary, offloadMetadata);
-      indexed++;
     } catch (e) {
       errors.push(`Cache ${entry.sourceHash}: ${e}`);
       skipped++;
@@ -219,15 +199,14 @@ async function rebuild(): Promise<SyncResult> {
         token_count: 0
       };
 
-      if (memory) {
-        await memory.add(summary, {
-          user_id: "offloads",
-          metadata: sessionMetadata
-        });
+      const result = await indexOffload(summary, sessionMetadata);
+      if (result.mem0_indexed) mem0Indexed = true;
+      if (result.success) {
+        indexed++;
+      } else {
+        errors.push(`Session ${entry.sessionName}: ${result.error}`);
+        skipped++;
       }
-
-      await appendToLocalIndex(summary, sessionMetadata);
-      indexed++;
     } catch (e) {
       errors.push(`Session ${entry.sessionName}: ${e}`);
       skipped++;
@@ -237,7 +216,7 @@ async function rebuild(): Promise<SyncResult> {
   return {
     success: errors.length === 0,
     action: "rebuild",
-    mem0_available: mem0Available,
+    mem0_available: mem0Indexed,
     indexed,
     pruned: 0,
     skipped,
@@ -249,8 +228,6 @@ async function rebuild(): Promise<SyncResult> {
 async function prune(): Promise<SyncResult> {
   const errors: string[] = [];
   let pruned = 0;
-
-  const mem0Available = await checkMem0Available();
 
   // Get all filesystem entry IDs
   const cacheEntries = await getAllCacheEntries();
@@ -286,7 +263,7 @@ async function prune(): Promise<SyncResult> {
   return {
     success: true,
     action: "prune",
-    mem0_available: mem0Available,
+    mem0_available: true, // mem0 pruning not implemented, only local index
     indexed: 0,
     pruned,
     skipped: 0,

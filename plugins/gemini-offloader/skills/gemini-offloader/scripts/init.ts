@@ -195,6 +195,46 @@ async function showStatus(): Promise<InitResult> {
   }
 }
 
+async function setMem0Mode(mode: "hosted" | "local"): Promise<InitResult> {
+  const paths = getBasePaths();
+
+  try {
+    const config = await loadConfig();
+    config.mem0_mode = mode;
+    await saveConfig(config);
+    const stats = await getStats();
+
+    return {
+      success: true,
+      action: "status",
+      paths: {
+        base_dir: paths.BASE_DIR,
+        config_file: paths.CONFIG_FILE,
+        index_file: paths.INDEX_FILE,
+        projects_dir: paths.PROJECTS_DIR
+      },
+      created: [],
+      config,
+      stats,
+      error: null
+    };
+  } catch (e) {
+    return {
+      success: false,
+      action: "status",
+      paths: {
+        base_dir: paths.BASE_DIR,
+        config_file: paths.CONFIG_FILE,
+        index_file: paths.INDEX_FILE,
+        projects_dir: paths.PROJECTS_DIR
+      },
+      created: [],
+      config: {} as GlobalConfig,
+      error: String(e)
+    };
+  }
+}
+
 async function resetConfig(): Promise<InitResult> {
   const paths = getBasePaths();
 
@@ -205,6 +245,13 @@ async function resetConfig(): Promise<InitResult> {
       cache_enabled: true,
       cache_ttl_days: 30,
       mem0_enabled: true,
+      mem0_mode: "hosted",
+      mem0_local_config: {
+        llm_provider: "groq",
+        llm_model: "llama-3.1-8b-instant",
+        embedder_provider: "ollama",
+        embedder_model: "nomic-embed-text"
+      },
       summary_max_tokens: 500,
       projects: {}
     };
@@ -249,14 +296,22 @@ async function main() {
     options: {
       status: { type: "boolean", short: "s" },
       repair: { type: "boolean", short: "r" },
-      reset: { type: "boolean" }
+      reset: { type: "boolean" },
+      "mem0-mode": { type: "string", short: "m" }
     },
     allowPositionals: false
   });
 
   let result: InitResult;
 
-  if (values.status) {
+  if (values["mem0-mode"]) {
+    const mode = values["mem0-mode"] as string;
+    if (mode !== "hosted" && mode !== "local") {
+      console.log(JSON.stringify({ success: false, error: "mem0-mode must be 'hosted' or 'local'" }));
+      process.exit(1);
+    }
+    result = await setMem0Mode(mode);
+  } else if (values.status) {
     result = await showStatus();
   } else if (values.reset) {
     result = await resetConfig();

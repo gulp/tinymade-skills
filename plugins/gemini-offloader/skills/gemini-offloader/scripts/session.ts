@@ -25,6 +25,15 @@ import { $ } from "bun";
 import { existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
+import {
+  appendSessionTurn,
+  generateSimpleSummary,
+  estimateTokens,
+  getProjectHash,
+  hashContent,
+  type OffloadMetadata
+} from "./state.ts";
+import { indexOffload } from "./memory.ts";
 
 interface SessionState {
   named_sessions: Record<string, number>;
@@ -108,11 +117,40 @@ async function listSessions(geminiPath: string): Promise<SessionInfo[]> {
   }
 }
 
+/**
+ * Verify a session index exists and return info about it
+ */
+async function verifySession(geminiPath: string, index: number): Promise<{
+  exists: boolean;
+  session?: SessionInfo;
+  availableSessions: SessionInfo[];
+}> {
+  const sessions = await listSessions(geminiPath);
+  const session = sessions.find(s => s.index === index);
+  return {
+    exists: !!session,
+    session,
+    availableSessions: sessions
+  };
+}
+
+interface GeminiResult {
+  response: string | null;
+  error: string | null;
+  exitCode?: number;
+  diagnostic?: {
+    type: "success" | "timeout" | "rate_limit" | "auth" | "stale_session" | "unknown";
+    message: string;
+    suggestion: string;
+  };
+}
+
 async function runWithSession(
   geminiPath: string,
   prompt: string,
-  resume?: string | number
-): Promise<{ response: string | null; error: string | null }> {
+  resume?: string | number,
+  timeoutMs: number = 90000
+): Promise<GeminiResult> {
   const cmdArgs: string[] = [geminiPath];
 
   if (resume !== undefined) {
@@ -122,30 +160,203 @@ async function runWithSession(
   cmdArgs.push("-o", "json");
   cmdArgs.push(prompt);
 
+  const startTime = Date.now();
+
   try {
     const proc = Bun.spawn(cmdArgs, {
       stdout: "pipe",
       stderr: "pipe"
     });
 
-    const stdout = await new Response(proc.stdout).text();
-    const stderr = await new Response(proc.stderr).text();
+    // Race between process completion and timeout
+    const timeoutPromise = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), timeoutMs)
+    );
+
+    const processPromise = (async () => {
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited
+      ]);
+      return { stdout, stderr, exitCode };
+    })();
+
+    const result = await Promise.race([processPromise, timeoutPromise]);
+
+    if (result === "timeout") {
+      proc.kill();
+      return {
+        response: null,
+        error: `Request timed out after ${timeoutMs / 1000}s`,
+        diagnostic: {
+          type: "timeout",
+          message: `Gemini did not respond within ${timeoutMs / 1000} seconds`,
+          suggestion: "Try a shorter prompt, or wait 30-60s if rate limited"
+        }
+      };
+    }
+
+    const { stdout, stderr, exitCode } = result;
+    const elapsed = Date.now() - startTime;
+
+    // Interpret exit codes
+    if (exitCode === 124) {
+      return {
+        response: null,
+        error: "Timeout: Context too large or slow response",
+        exitCode,
+        diagnostic: {
+          type: "timeout",
+          message: `Exit 124 after ${elapsed}ms: Backend timeout`,
+          suggestion: "Reduce context size or use shorter prompts"
+        }
+      };
+    }
+
+    if (exitCode === 144) {
+      return {
+        response: null,
+        error: "Rate limited: Too many requests",
+        exitCode,
+        diagnostic: {
+          type: "rate_limit",
+          message: `Exit 144 after ${elapsed}ms: Quota/rate throttling`,
+          suggestion: "Wait 30-60 seconds before retrying"
+        }
+      };
+    }
+
+    // Check for auth errors in stderr
+    if (stderr.includes("authentication") || stderr.includes("401") || stderr.includes("login")) {
+      return {
+        response: null,
+        error: stderr.trim(),
+        exitCode,
+        diagnostic: {
+          type: "auth",
+          message: "Authentication required or expired",
+          suggestion: "Run 'gemini' interactively to re-authenticate"
+        }
+      };
+    }
 
     if (stdout.trim()) {
       try {
         const data = JSON.parse(stdout);
         if (data.error) {
-          return { response: null, error: data.error.message || String(data.error) };
+          return {
+            response: null,
+            error: data.error.message || String(data.error),
+            exitCode,
+            diagnostic: {
+              type: "unknown",
+              message: `API error: ${data.error.message || data.error}`,
+              suggestion: "Check the error message for details"
+            }
+          };
         }
-        return { response: data.response || data.text || stdout.trim(), error: null };
+        return {
+          response: data.response || data.text || stdout.trim(),
+          error: null,
+          exitCode,
+          diagnostic: {
+            type: "success",
+            message: `Completed in ${elapsed}ms`,
+            suggestion: ""
+          }
+        };
       } catch {
-        return { response: stdout.trim(), error: null };
+        return {
+          response: stdout.trim(),
+          error: null,
+          exitCode,
+          diagnostic: {
+            type: "success",
+            message: `Completed in ${elapsed}ms (non-JSON response)`,
+            suggestion: ""
+          }
+        };
       }
     }
 
-    return { response: null, error: stderr.trim() || "No response" };
+    return {
+      response: null,
+      error: stderr.trim() || "No response",
+      exitCode,
+      diagnostic: {
+        type: "unknown",
+        message: `Exit ${exitCode} after ${elapsed}ms: ${stderr.slice(0, 200) || "No output"}`,
+        suggestion: "Check stderr for details"
+      }
+    };
   } catch (e) {
-    return { response: null, error: String(e) };
+    return {
+      response: null,
+      error: String(e),
+      diagnostic: {
+        type: "unknown",
+        message: `Exception: ${e}`,
+        suggestion: "Check if gemini-cli is installed correctly"
+      }
+    };
+  }
+}
+
+/**
+ * Persist a session turn to ~/.gemini_offloader and index in mem0
+ */
+async function persistSessionTurn(args: {
+  sessionName: string;
+  prompt: string;
+  response: string;
+  geminiIndex: number;
+  isNewSession: boolean;
+}): Promise<{ persisted: boolean; indexed: boolean; turnNumber: number }> {
+  try {
+    const projectHash = await getProjectHash();
+    const tokenCount = estimateTokens(args.response);
+    const summary = generateSimpleSummary(args.response);
+
+    // Persist to filesystem
+    const metadata = await appendSessionTurn({
+      projectHash,
+      sessionName: args.sessionName,
+      prompt: args.prompt,
+      fullResponse: args.response,
+      summary,
+      geminiSessionIndex: args.geminiIndex,
+      tokenCount
+    });
+
+    // Index in mem0 with rich metadata
+    const offloadMetadata: OffloadMetadata = {
+      project_hash: projectHash,
+      project_path: process.cwd(),
+      source_path: `session:${args.sessionName}`,
+      source_hash: hashContent(`${args.sessionName}:${metadata.turn_count}`),
+      source_type: "stdin" as const,
+      session_name: args.sessionName,
+      turn_number: metadata.turn_count,
+      timestamp: new Date().toISOString(),
+      type: "research" as const,
+      topics: [],
+      model: "gemini-2.5-pro",
+      prompt_hash: hashContent(args.prompt),
+      response_file: `sessions/${args.sessionName}/full_response-*.md`,
+      token_count: tokenCount
+    };
+
+    const indexResult = await indexOffload(summary, offloadMetadata);
+
+    return {
+      persisted: true,
+      indexed: indexResult.success,
+      turnNumber: metadata.turn_count
+    };
+  } catch (e) {
+    console.error("Session persistence error:", e);
+    return { persisted: false, indexed: false, turnNumber: 0 };
   }
 }
 
@@ -187,6 +398,7 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
   const state = await loadState();
   let resume: string | number = "latest";
   let sessionInfo: { type: string; name?: string; index?: number } = { type: "latest" };
+  let persistenceName: string | null = null;
 
   if (args.name) {
     if (!(args.name in state.named_sessions)) {
@@ -197,19 +409,71 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
     }
     resume = state.named_sessions[args.name];
     sessionInfo = { type: "named", name: args.name, index: resume };
+    persistenceName = args.name;
   } else if (args.index !== undefined) {
     resume = args.index;
     sessionInfo = { type: "indexed", index: resume };
+    // Look up name by index or use fallback
+    for (const [name, idx] of Object.entries(state.named_sessions)) {
+      if (idx === args.index) {
+        persistenceName = name;
+        break;
+      }
+    }
+    if (!persistenceName) {
+      persistenceName = `session-${args.index}`;
+    }
+  } else {
+    // "latest" mode - try to find the name for latest session
+    if (state.last_used?.session.name) {
+      persistenceName = state.last_used.session.name;
+    } else {
+      persistenceName = "latest";
+    }
   }
 
-  const { response, error } = await runWithSession(geminiPath, args.prompt, resume);
+  // Verify session exists before attempting to resume (skip for "latest")
+  if (typeof resume === "number") {
+    const verification = await verifySession(geminiPath, resume);
+    if (!verification.exists) {
+      // Clean up stale mapping if this was a named session
+      if (args.name && args.name in state.named_sessions) {
+        delete state.named_sessions[args.name];
+        await saveState(state);
+      }
+
+      const availableList = verification.availableSessions.length > 0
+        ? verification.availableSessions.map(s => `  ${s.index}: ${s.description.slice(0, 60)}`).join("\n")
+        : "  (no sessions available)";
+
+      return {
+        action: "continue",
+        session: sessionInfo,
+        success: false,
+        error: `Session ${resume} no longer exists (purged by gemini-cli)`,
+        diagnostic: {
+          type: "stale_session" as const,
+          message: `Session index ${resume}${args.name ? ` ('${args.name}')` : ""} was purged. Named mapping has been cleaned up.`,
+          suggestion: `Create a new session with 'create --name "${args.name || "new-session"}" --prompt "..."'`
+        },
+        available_sessions: verification.availableSessions.map(s => ({
+          index: s.index,
+          description: s.description.slice(0, 80)
+        }))
+      };
+    }
+  }
+
+  const { response, error, exitCode, diagnostic } = await runWithSession(geminiPath, args.prompt, resume);
 
   if (error) {
     return {
       action: "continue",
       session: sessionInfo,
       success: false,
-      error
+      error,
+      exitCode,
+      diagnostic
     };
   }
 
@@ -221,10 +485,24 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
   };
   await saveState(state);
 
+  // Persist session turn and index in mem0
+  const persistence = await persistSessionTurn({
+    sessionName: persistenceName,
+    prompt: args.prompt,
+    response: response!,
+    geminiIndex: typeof resume === "number" ? resume : 0,
+    isNewSession: false
+  });
+
   return {
     action: "continue",
     session: sessionInfo,
     response,
+    persisted: persistence.persisted,
+    indexed: persistence.indexed,
+    turn: persistence.turnNumber,
+    exitCode,
+    diagnostic,
     success: true
   };
 }
@@ -236,13 +514,15 @@ async function cmdCreate(args: { name: string; prompt: string }) {
   }
 
   // Run initial query (creates new session)
-  const { response, error } = await runWithSession(geminiPath, args.prompt);
+  const { response, error, exitCode, diagnostic } = await runWithSession(geminiPath, args.prompt);
 
   if (error) {
     return {
       action: "create",
       success: false,
-      error
+      error,
+      exitCode,
+      diagnostic
     };
   }
 
@@ -260,10 +540,24 @@ async function cmdCreate(args: { name: string; prompt: string }) {
   };
   await saveState(state);
 
+  // Persist session turn and index in mem0
+  const persistence = await persistSessionTurn({
+    sessionName: args.name,
+    prompt: args.prompt,
+    response: response!,
+    geminiIndex: newIndex,
+    isNewSession: true
+  });
+
   return {
     action: "create",
     session: { name: args.name, index: newIndex },
     response,
+    persisted: persistence.persisted,
+    indexed: persistence.indexed,
+    turn: persistence.turnNumber,
+    exitCode,
+    diagnostic,
     success: true
   };
 }
@@ -377,4 +671,7 @@ async function main() {
   process.exit(result.success ? 0 : 1);
 }
 
-main();
+// Only run main() when this file is the entry point
+if (import.meta.main) {
+  main();
+}

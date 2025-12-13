@@ -214,9 +214,9 @@ async function runQuery(args: {
           tokenCount
         });
 
-        // Index in mem0 (async, don't wait)
-        indexOffload(summary, metadata.offload_metadata).catch(() => {
-          // Ignore indexing errors
+        // Index in mem0
+        await indexOffload(summary, metadata.offload_metadata).catch(() => {
+          // Ignore indexing errors silently
         });
 
         const result: QueryResult = {
@@ -258,7 +258,7 @@ async function runQuery(args: {
           });
 
           // Index in mem0
-          indexOffload(summary, metadata.offload_metadata).catch(() => {});
+          await indexOffload(summary, metadata.offload_metadata).catch(() => {});
 
           const result: QueryResult = {
             success: true,

@@ -17,6 +17,14 @@
  *   bun run scripts/memory.ts index-offload --summary "..." --metadata '{...}'
  *   echo '{"response":"..."}' | bun run scripts/memory.ts store-response --user "research" --topic "wasm"
  *
+ *   # Filter local index with various criteria:
+ *   bun run scripts/memory.ts filter-local --since 7d                    # Last 7 days
+ *   bun run scripts/memory.ts filter-local --session "research-wasm"     # By session name
+ *   bun run scripts/memory.ts filter-local --source "sessions/*"         # By source path pattern
+ *   bun run scripts/memory.ts filter-local --topic "performance"         # By topic
+ *   bun run scripts/memory.ts filter-local --query "memory" --since 1m   # Combined filters
+ *   bun run scripts/memory.ts filter-local --global                      # Search all projects
+ *
  * Output JSON:
  *   {
  *     "action": "add",
@@ -32,93 +40,150 @@ import { join, dirname } from "path";
 import {
   appendToLocalIndex,
   loadLocalIndex,
+  getProjectHash,
+  getMem0Mode,
+  getMem0LocalConfig,
   type OffloadMetadata
 } from "./state";
 
-// Dynamic import for mem0 (may not be installed)
-let Memory: any = null;
+// Dual-mode mem0 support: hosted API or local OSS
+let MemoryOSS: any = null;
+let MemoryClient: any = null;
+let memoryInstance: any = null;
+let currentMode: "hosted" | "local" | null = null;
 
-async function loadMem0(): Promise<boolean> {
+async function loadMem0OSS(): Promise<boolean> {
   try {
-    const mem0 = await import("mem0ai");
-    Memory = mem0.Memory || mem0.default?.Memory;
-    return Memory !== null;
-  } catch {
+    const mem0 = await import("mem0ai/oss");
+    MemoryOSS = mem0.Memory || mem0.default?.Memory || mem0.default;
+    return MemoryOSS != null;
+  } catch (e) {
     return false;
   }
 }
 
-function getConfigPath(): string {
-  return join(homedir(), ".config", "gemini-offloader", "mem0_config.json");
-}
-
-async function loadConfig(): Promise<Record<string, unknown>> {
-  const configPath = getConfigPath();
-  if (existsSync(configPath)) {
-    try {
-      return await Bun.file(configPath).json();
-    } catch {
-      // Ignore
-    }
-  }
-  return { version: "v1.1" };
-}
-
-async function getMemory(): Promise<{ memory: any; error: string | null }> {
-  const available = await loadMem0();
-  if (!available) {
-    return {
-      memory: null,
-      error: "mem0 not installed. Run: bun add mem0ai"
-    };
-  }
-
+async function loadMem0Hosted(): Promise<boolean> {
   try {
-    const config = await loadConfig();
-    const m = new Memory(config);
-    return { memory: m, error: null };
+    const mem0 = await import("mem0ai");
+    MemoryClient = mem0.default || mem0.MemoryClient || mem0;
+    return MemoryClient != null;
   } catch (e) {
-    // Try simple initialization
+    return false;
+  }
+}
+
+async function getLocalMemoryConfig() {
+  const localConfig = await getMem0LocalConfig();
+  const historyDbPath = join(homedir(), ".gemini_offloader", "memory.db");
+
+  return {
+    llm: {
+      provider: localConfig.llm_provider,
+      config: {
+        model: localConfig.llm_model,
+        apiKey: process.env.GROQ_API_KEY,
+      }
+    },
+    embedder: {
+      provider: localConfig.embedder_provider,
+      config: {
+        model: localConfig.embedder_model,
+      }
+    },
+    vectorStore: {
+      provider: "memory",
+      config: {
+        collectionName: "offloads",
+        dimension: 768,
+      }
+    },
+    historyDbPath,
+  };
+}
+
+async function getMemory(): Promise<{ memory: any; error: string | null; mode: "hosted" | "local" }> {
+  const mode = await getMem0Mode();
+
+  // Return cached instance if mode matches
+  if (memoryInstance && currentMode === mode) {
+    return { memory: memoryInstance, error: null, mode };
+  }
+
+  if (mode === "hosted") {
+    // Hosted mem0 API
+    const available = await loadMem0Hosted();
+    if (!available) {
+      return { memory: null, error: "mem0ai not installed. Run: bun add mem0ai", mode };
+    }
+
+    const apiKey = process.env.MEM0_API_KEY;
+    if (!apiKey) {
+      return { memory: null, error: "MEM0_API_KEY not set. Required for hosted mem0.", mode };
+    }
+
     try {
-      const m = new Memory();
-      return { memory: m, error: null };
-    } catch (e2) {
-      return {
-        memory: null,
-        error: `Failed to initialize mem0: ${e2}`
-      };
+      memoryInstance = new MemoryClient({ apiKey });
+      currentMode = mode;
+      return { memory: memoryInstance, error: null, mode };
+    } catch (e) {
+      return { memory: null, error: `Failed to initialize hosted mem0: ${e}`, mode };
+    }
+  } else {
+    // Local mem0 OSS
+    const available = await loadMem0OSS();
+    if (!available) {
+      return { memory: null, error: "mem0ai/oss not installed. Run: bun add mem0ai", mode };
+    }
+
+    if (!process.env.GROQ_API_KEY) {
+      return { memory: null, error: "GROQ_API_KEY not set. Required for local mem0 LLM.", mode };
+    }
+
+    try {
+      const config = await getLocalMemoryConfig();
+      memoryInstance = new MemoryOSS(config);
+      currentMode = mode;
+      return { memory: memoryInstance, error: null, mode };
+    } catch (e) {
+      return { memory: null, error: `Failed to initialize local mem0: ${e}`, mode };
     }
   }
 }
 
 async function cmdStatus() {
-  const available = await loadMem0();
+  const mode = await getMem0Mode();
+  const { memory, error, mode: activeMode } = await getMemory();
 
   const result: Record<string, unknown> = {
     action: "status",
-    mem0_installed: available,
-    success: available
+    mem0_mode: mode,
+    success: !error
   };
 
-  if (!available) {
-    result.error = "mem0 not installed. Run: bun add mem0ai";
-    result.install_command = "bun add mem0ai";
+  if (mode === "hosted") {
+    result.mem0_api_key_set = !!process.env.MEM0_API_KEY;
+    result.config = { provider: "mem0.ai hosted API" };
   } else {
-    const { memory, error } = await getMemory();
-    if (error) {
-      result.success = false;
-      result.error = error;
-    } else {
-      result.config_path = getConfigPath();
-      result.memory_initialized = true;
-    }
+    const localConfig = await getMem0LocalConfig();
+    result.groq_api_key_set = !!process.env.GROQ_API_KEY;
+    result.config = {
+      llm: `${localConfig.llm_provider}/${localConfig.llm_model}`,
+      embedder: `${localConfig.embedder_provider}/${localConfig.embedder_model}`,
+      vectorStore: "memory (in-memory)",
+    };
+  }
+
+  if (error) {
+    result.error = error;
+  } else {
+    result.memory_initialized = true;
   }
 
   return result;
 }
 
 async function cmdAdd(args: { user: string; text: string; topic?: string; metadata?: string }) {
-  const { memory, error } = await getMemory();
+  const { memory, error, mode } = await getMemory();
   if (error) {
     return { action: "add", success: false, error };
   }
@@ -136,7 +201,15 @@ async function cmdAdd(args: { user: string; text: string; topic?: string; metada
       metadata.topic = args.topic;
     }
 
-    const result = await memory.add(args.text, { user_id: args.user, metadata });
+    let result;
+    if (mode === "hosted") {
+      // Hosted API: expects Array<Message>, uses user_id (snake_case)
+      const messages = [{ role: "user" as const, content: args.text }];
+      result = await memory.add(messages, { user_id: args.user, metadata });
+    } else {
+      // OSS API: accepts string, uses userId (camelCase)
+      result = await memory.add(args.text, { userId: args.user, metadata });
+    }
 
     return {
       action: "add",
@@ -150,16 +223,26 @@ async function cmdAdd(args: { user: string; text: string; topic?: string; metada
 }
 
 async function cmdSearch(args: { user: string; query: string; limit?: number }) {
-  const { memory, error } = await getMemory();
+  const { memory, error, mode } = await getMemory();
   if (error) {
     return { action: "search", success: false, error };
   }
 
   try {
-    const results = await memory.search(args.query, {
-      user_id: args.user,
-      limit: args.limit || 5
-    });
+    let results;
+    if (mode === "hosted") {
+      // Hosted API: uses user_id (snake_case)
+      results = await memory.search(args.query, {
+        user_id: args.user,
+        limit: args.limit || 5
+      });
+    } else {
+      // OSS API: uses userId (camelCase)
+      results = await memory.search(args.query, {
+        userId: args.user,
+        limit: args.limit || 5
+      });
+    }
 
     return {
       action: "search",
@@ -174,20 +257,30 @@ async function cmdSearch(args: { user: string; query: string; limit?: number }) 
 }
 
 async function cmdGet(args: { user: string }) {
-  const { memory, error } = await getMemory();
+  const { memory, error, mode } = await getMemory();
   if (error) {
     return { action: "get", success: false, error };
   }
 
   try {
-    const results = await memory.getAll({ user_id: args.user });
+    let results;
+    if (mode === "hosted") {
+      // Hosted API: uses user_id (snake_case)
+      results = await memory.getAll({ user_id: args.user });
+    } else {
+      // OSS API: uses userId (camelCase)
+      results = await memory.getAll({ userId: args.user });
+    }
+
+    // Normalize response format (hosted returns array, OSS returns { results: [] })
+    const memories = Array.isArray(results) ? results : results?.results || [];
 
     return {
       action: "get",
       success: true,
       user: args.user,
-      count: results?.length || 0,
-      memories: results
+      count: memories.length,
+      memories
     };
   } catch (e) {
     return { action: "get", success: false, error: String(e) };
@@ -227,13 +320,23 @@ export async function indexOffload(
   let error: string | null = null;
 
   // Try mem0 first
-  const { memory, error: mem0Error } = await getMemory();
+  const { memory, error: mem0Error, mode } = await getMemory();
   if (memory && !mem0Error) {
     try {
-      await memory.add(summary, {
-        user_id: "offloads",
-        metadata: metadata as Record<string, unknown>
-      });
+      if (mode === "hosted") {
+        // Hosted API: expects Array<Message>, uses user_id (snake_case)
+        const messages = [{ role: "user" as const, content: summary }];
+        await memory.add(messages, {
+          user_id: "offloads",
+          metadata: metadata as Record<string, unknown>
+        });
+      } else {
+        // OSS API: accepts string, uses userId (camelCase)
+        await memory.add(summary, {
+          userId: "offloads",
+          metadata: metadata as Record<string, unknown>
+        });
+      }
       mem0Indexed = true;
     } catch (e) {
       error = `mem0 indexing failed: ${e}`;
@@ -319,8 +422,188 @@ async function searchLocalIndex(query: string, limit: number = 5): Promise<Array
     .slice(0, limit);
 }
 
+/**
+ * Parse relative time strings like "7d", "2w", "1m" into dates
+ */
+function parseRelativeTime(sinceStr: string): Date | null {
+  const now = new Date();
+
+  // Try ISO date first
+  const isoDate = new Date(sinceStr);
+  if (!isNaN(isoDate.getTime())) {
+    return isoDate;
+  }
+
+  // Parse relative time: 7d, 2w, 1m, 1y
+  const match = sinceStr.match(/^(\d+)([dwmy])$/i);
+  if (!match) return null;
+
+  const amount = parseInt(match[1]);
+  const unit = match[2].toLowerCase();
+
+  switch (unit) {
+    case "d":
+      now.setDate(now.getDate() - amount);
+      break;
+    case "w":
+      now.setDate(now.getDate() - amount * 7);
+      break;
+    case "m":
+      now.setMonth(now.getMonth() - amount);
+      break;
+    case "y":
+      now.setFullYear(now.getFullYear() - amount);
+      break;
+    default:
+      return null;
+  }
+
+  return now;
+}
+
+interface FilterOptions {
+  query?: string;
+  since?: string;
+  source?: string;
+  session?: string;
+  topic?: string;
+  global?: boolean;
+  limit?: number;
+}
+
+/**
+ * Filter local index with multiple criteria
+ */
+async function filterLocalIndex(options: FilterOptions): Promise<Array<{
+  id: string;
+  summary: string;
+  metadata: OffloadMetadata;
+  matchReasons: string[];
+}>> {
+  const index = await loadLocalIndex();
+  const currentProjectHash = options.global ? null : await getProjectHash();
+
+  const results: Array<{
+    id: string;
+    summary: string;
+    metadata: OffloadMetadata;
+    matchReasons: string[];
+  }> = [];
+
+  // Parse since date if provided
+  const sinceDate = options.since ? parseRelativeTime(options.since) : null;
+
+  // Parse query terms if provided
+  const queryTerms = options.query
+    ? options.query.toLowerCase().split(/\s+/).filter(t => t.length > 2)
+    : [];
+
+  for (const entry of index.entries) {
+    const matchReasons: string[] = [];
+
+    // Filter by project (unless global)
+    if (currentProjectHash && entry.metadata.project_hash !== currentProjectHash) {
+      continue;
+    }
+
+    // Filter by since date
+    if (sinceDate) {
+      const entryDate = new Date(entry.metadata.timestamp);
+      if (entryDate < sinceDate) continue;
+      matchReasons.push(`after ${options.since}`);
+    }
+
+    // Filter by source pattern
+    if (options.source) {
+      const pattern = options.source.toLowerCase();
+      const sourcePath = entry.metadata.source_path.toLowerCase();
+      // Simple glob-like matching: * matches anything
+      const regex = new RegExp("^" + pattern.replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+      if (!regex.test(sourcePath) && !sourcePath.includes(pattern)) {
+        continue;
+      }
+      matchReasons.push(`source: ${options.source}`);
+    }
+
+    // Filter by session name
+    if (options.session) {
+      if (!entry.metadata.session_name) continue;
+      if (!entry.metadata.session_name.toLowerCase().includes(options.session.toLowerCase())) {
+        continue;
+      }
+      matchReasons.push(`session: ${entry.metadata.session_name}`);
+    }
+
+    // Filter by topic
+    if (options.topic) {
+      const topicLower = options.topic.toLowerCase();
+      const hasMatchingTopic = entry.metadata.topics.some(t =>
+        t.toLowerCase().includes(topicLower)
+      );
+      if (!hasMatchingTopic) continue;
+      matchReasons.push(`topic: ${options.topic}`);
+    }
+
+    // Filter by query terms (keyword search)
+    if (queryTerms.length > 0) {
+      const summaryLower = entry.summary.toLowerCase();
+      const matchingTerms = queryTerms.filter(term => summaryLower.includes(term));
+      if (matchingTerms.length === 0) continue;
+      matchReasons.push(`keywords: ${matchingTerms.join(", ")}`);
+    }
+
+    // Entry passed all filters
+    results.push({
+      id: entry.id,
+      summary: entry.summary,
+      metadata: entry.metadata,
+      matchReasons: matchReasons.length > 0 ? matchReasons : ["all filters"]
+    });
+  }
+
+  // Sort by timestamp (newest first)
+  results.sort((a, b) =>
+    new Date(b.metadata.timestamp).getTime() - new Date(a.metadata.timestamp).getTime()
+  );
+
+  // Apply limit
+  const limit = options.limit || 10;
+  return results.slice(0, limit);
+}
+
+async function cmdFilterLocal(options: FilterOptions) {
+  try {
+    const results = await filterLocalIndex(options);
+
+    return {
+      action: "filter-local",
+      success: true,
+      filters: {
+        query: options.query || null,
+        since: options.since || null,
+        source: options.source || null,
+        session: options.session || null,
+        topic: options.topic || null,
+        global: options.global || false
+      },
+      count: results.length,
+      results: results.map(r => ({
+        id: r.id,
+        summary: r.summary.slice(0, 500) + (r.summary.length > 500 ? "..." : ""),
+        timestamp: r.metadata.timestamp,
+        source_path: r.metadata.source_path,
+        session_name: r.metadata.session_name,
+        type: r.metadata.type,
+        match_reasons: r.matchReasons
+      }))
+    };
+  } catch (e) {
+    return { action: "filter-local", success: false, error: String(e) };
+  }
+}
+
 async function cmdStoreResponse(args: { user: string; topic: string; file?: string }) {
-  const { memory, error } = await getMemory();
+  const { memory, error, mode } = await getMemory();
   if (error) {
     return { action: "store-response", success: false, error };
   }
@@ -357,10 +640,15 @@ async function cmdStoreResponse(args: { user: string; topic: string; file?: stri
       tokens: data.tokens
     };
 
-    const result = await memory.add(responseText, {
-      user_id: args.user,
-      metadata
-    });
+    let result;
+    if (mode === "hosted") {
+      // Hosted API: expects Array<Message>, uses user_id (snake_case)
+      const messages = [{ role: "user" as const, content: responseText }];
+      result = await memory.add(messages, { user_id: args.user, metadata });
+    } else {
+      // OSS API: accepts string, uses userId (camelCase)
+      result = await memory.add(responseText, { userId: args.user, metadata });
+    }
 
     return {
       action: "store-response",
@@ -382,14 +670,14 @@ async function main() {
   if (!command) {
     console.log(JSON.stringify({
       success: false,
-      error: "Usage: memory.ts <status|add|search|get|delete|store-response> [options]"
+      error: "Usage: memory.ts <status|add|search|get|delete|store-response|search-local|filter-local> [options]"
     }, null, 2));
     process.exit(1);
   }
 
   // Parse options
   const parseOptions = (args: string[]) => {
-    const opts: Record<string, string | number> = {};
+    const opts: Record<string, string | number | boolean> = {};
     for (let i = 0; i < args.length; i++) {
       if (args[i] === "--user" || args[i] === "-u") opts.user = args[++i];
       else if (args[i] === "--text" || args[i] === "-t") opts.text = args[++i];
@@ -400,6 +688,11 @@ async function main() {
       else if (args[i] === "--id") opts.id = args[++i];
       else if (args[i] === "--file" || args[i] === "-f") opts.file = args[++i];
       else if (args[i] === "--summary" || args[i] === "-s") opts.summary = args[++i];
+      // Filter options
+      else if (args[i] === "--since") opts.since = args[++i];
+      else if (args[i] === "--source") opts.source = args[++i];
+      else if (args[i] === "--session") opts.session = args[++i];
+      else if (args[i] === "--global" || args[i] === "-g") opts.global = true;
     }
     return opts;
   };
@@ -486,6 +779,18 @@ async function main() {
         };
       }
       break;
+    case "filter-local":
+      // Supports: --query, --since, --source, --session, --topic, --global, --limit
+      result = await cmdFilterLocal({
+        query: opts.query as string | undefined,
+        since: opts.since as string | undefined,
+        source: opts.source as string | undefined,
+        session: opts.session as string | undefined,
+        topic: opts.topic as string | undefined,
+        global: opts.global as boolean | undefined,
+        limit: opts.limit as number | undefined
+      });
+      break;
     default:
       result = { success: false, error: `Unknown command: ${command}` };
   }
@@ -494,4 +799,7 @@ async function main() {
   process.exit(result.success ? 0 : 1);
 }
 
-main();
+// Only run main() when this file is the entry point
+if (import.meta.main) {
+  main();
+}

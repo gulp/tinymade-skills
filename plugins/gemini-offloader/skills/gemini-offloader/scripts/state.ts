@@ -66,17 +66,27 @@ export interface SessionMetadata {
   }>;
 }
 
+export interface Mem0LocalConfig {
+  llm_provider: string;
+  llm_model: string;
+  embedder_provider: string;
+  embedder_model: string;
+}
+
 export interface GlobalConfig {
   version: "1.0.0";
   default_model: string;
   cache_enabled: boolean;
   cache_ttl_days: number;
   mem0_enabled: boolean;
+  mem0_mode: "hosted" | "local";
+  mem0_local_config: Mem0LocalConfig;
   summary_max_tokens: number;
   projects: Record<string, {
     last_access: string;
     source_count: number;
     session_count: number;
+    mem0_mode?: "hosted" | "local";  // per-project override
   }>;
 }
 
@@ -114,6 +124,13 @@ const DEFAULT_CONFIG: GlobalConfig = {
   cache_enabled: true,
   cache_ttl_days: 30,
   mem0_enabled: true,
+  mem0_mode: "hosted",
+  mem0_local_config: {
+    llm_provider: "groq",
+    llm_model: "llama-3.1-8b-instant",
+    embedder_provider: "ollama",
+    embedder_model: "nomic-embed-text"
+  },
   summary_max_tokens: 500,
   projects: {}
 };
@@ -281,6 +298,19 @@ export async function loadConfig(): Promise<GlobalConfig> {
 export async function saveConfig(config: GlobalConfig): Promise<void> {
   ensureBaseDir();
   await Bun.write(CONFIG_FILE, JSON.stringify(config, null, 2));
+}
+
+export async function getMem0Mode(projectHash?: string): Promise<"hosted" | "local"> {
+  const config = await loadConfig();
+  if (projectHash && config.projects[projectHash]?.mem0_mode) {
+    return config.projects[projectHash].mem0_mode!;
+  }
+  return config.mem0_mode || "hosted";
+}
+
+export async function getMem0LocalConfig(): Promise<GlobalConfig["mem0_local_config"]> {
+  const config = await loadConfig();
+  return config.mem0_local_config || DEFAULT_CONFIG.mem0_local_config;
 }
 
 export async function updateProjectAccess(projectHash: string): Promise<void> {
