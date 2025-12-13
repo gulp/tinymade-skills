@@ -4,8 +4,14 @@ Spawn a terminal in a worktree with optional Claude auto-start.
 
 Usage:
     python spawn_terminal.py --worktree .trees/feature-foo --task m-implement-foo
+    python spawn_terminal.py --worktree .trees/feature-foo --autonomous --task m-implement-foo
     python spawn_terminal.py --worktree .trees/feature-foo --command "vim ."
     python spawn_terminal.py --worktree .trees/feature-foo  # just open shell
+
+The --autonomous flag is a convenience shortcut that:
+  - Requires --task (fails if not provided)
+  - Implies --bypass-sessions (configures cc-sessions for unattended work)
+  - Signals explicit intent for fully autonomous agent operation
 """
 
 import argparse
@@ -269,8 +275,17 @@ def main():
                         help="Configure cc-sessions for autonomous work (sets implementation mode + bypass_mode)")
     parser.add_argument("--no-bypass-sessions", action="store_true",
                         help="Do NOT configure cc-sessions bypass (default: bypass enabled when --task is used)")
+    parser.add_argument("--autonomous", "-a", action="store_true",
+                        help="Shortcut for autonomous agent mode: requires --task, implies --bypass-sessions")
 
     args = parser.parse_args()
+
+    # --autonomous is a convenience flag that requires --task and implies --bypass-sessions
+    if args.autonomous:
+        if not args.task:
+            parser.error("--autonomous requires --task to specify which task to run")
+        # Force bypass mode for autonomous operation
+        args.bypass_sessions = True
 
     # Resolve paths
     worktree_path = Path(args.worktree).resolve()
@@ -325,6 +340,7 @@ def main():
         "inner_command": inner_command,
         "terminal_command": terminal_command,
         "sessions_bypass": sessions_configured,
+        "autonomous_mode": args.autonomous,
     }
 
     if args.dry_run:
@@ -342,6 +358,8 @@ def main():
             print(f"Worktree: {worktree_path}")
             if args.task:
                 print(f"Task: {args.task}")
+            if args.autonomous:
+                print("Mode: AUTONOMOUS (self-approving agent)")
             if sessions_configured:
                 print("Sessions bypass: ENABLED (implementation mode + bypass_mode)")
             if args.dry_run:

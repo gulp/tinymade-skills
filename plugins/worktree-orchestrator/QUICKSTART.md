@@ -29,7 +29,10 @@ python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-or
 # 4. Check if safe to cleanup
 python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/check_cleanup_safe.py feature/my-branch sessions/tasks
 
-# 5. Spawn terminal in worktree
+# 5. Spawn terminal in worktree (autonomous mode)
+python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_terminal.py --worktree .trees/feature-foo --autonomous --task m-implement-foo
+
+# 6. Spawn terminal in worktree (interactive mode)
 python /path/to/tinymade-skills/plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_terminal.py --worktree .trees/feature-foo --task m-implement-foo
 ```
 

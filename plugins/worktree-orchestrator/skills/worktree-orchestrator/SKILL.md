@@ -26,6 +26,7 @@ python scripts/check_cleanup_safe.py feature/pick-cli sessions/tasks
 
 # Spawn terminal in worktree (with optional claude auto-start)
 python scripts/spawn_terminal.py --worktree .trees/feature-foo --task m-implement-foo
+python scripts/spawn_terminal.py --worktree .trees/feature-foo --autonomous --task m-implement-foo  # fully autonomous agent
 python scripts/spawn_terminal.py --worktree .trees/feature-foo  # just shell
 python scripts/spawn_terminal.py --worktree .trees/feature-foo --command "vim ."
 ```
@@ -166,6 +167,7 @@ python scripts/spawn_terminal.py --worktree .trees/feature-foo --command "vim ."
 |------|-------------|
 | `--worktree, -w` | Path to worktree (required) |
 | `--task, -t` | Task name → spawns claude with task-specific prompt and enables autonomous mode |
+| `--autonomous, -a` | Shortcut for autonomous agent mode: requires --task, implies --bypass-sessions |
 | `--command, -c` | Custom command instead of claude |
 | `--project-root, -r` | Project root for relative paths (default: cwd) |
 | `--bypass-sessions, -b` | Configure cc-sessions for autonomous work (sets mode=implementation, bypass_mode=true) |
@@ -197,6 +199,10 @@ When `--task` flag is provided, spawn_terminal.py automatically:
 **Example: Spawn autonomous agent for a task**
 
 ```bash
+# Using --autonomous flag (recommended for clarity)
+python scripts/spawn_terminal.py --worktree .trees/feature-foo --autonomous --task m-implement-foo
+
+# Or using --task alone (autonomous mode enabled by default)
 python scripts/spawn_terminal.py --worktree .trees/feature-foo --task m-implement-foo
 ```
 
