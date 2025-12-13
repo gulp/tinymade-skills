@@ -1,4 +1,3 @@
-
 # cc-sessions runtime files
 sessions/sessions-state.json
 sessions/package.json
@@ -21,4 +20,12 @@ __pycache__/
 
 # Serena cache
 .serena/
+
+# Local Claude cache
 .claude/
+
+# Packaged skill files (build artifacts)
+*.skill
+
+# Test files
+test-blocking-demo.txt
