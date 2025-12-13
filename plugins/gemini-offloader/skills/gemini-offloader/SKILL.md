@@ -85,12 +85,91 @@ Options:
 - Prune orphans (clean stale entries)
 ```
 
-### Context-Aware Behavior
+### Context-Aware Behavior (REQUIRED)
 
-The `launcher.ts` output includes a `suggestion` field. Use this to:
-- Pre-select the recommended option in AskUserQuestion
-- Skip questions when intent is obvious from user's request
-- Show relevant context (e.g., "You have 3 active sessions")
+**BEFORE calling AskUserQuestion**, you MUST evaluate launcher output and adapt options accordingly.
+
+#### Decision Logic
+
+```
+IF launcher.project.active_sessions.length > 0:
+  → MUST include "Continue '{session_name}'" as FIRST option for each active session
+  → Do NOT use generic "Manage sessions" when specific sessions exist
+
+IF launcher.authenticated == false:
+  → MUST disable research/session creation options (show as unavailable)
+  → Primary option: "Check system status" marked as "(Recommended)"
+
+IF launcher.suggestion.operation is set:
+  → Mark that operation's option as "(Recommended)"
+
+IF launcher.global.total_sessions > 0 AND project.active_sessions is empty:
+  → Include "Resume a previous session" option (sessions exist but not in current project)
+
+IF user's request contains session name (e.g., "continue my wasm research"):
+  → Skip primary intent question
+  → Go directly to session continuation with that session pre-selected
+```
+
+#### Validation Checklist
+
+Before presenting options, verify:
+
+| Launcher Field | Condition | Required Action |
+|----------------|-----------|-----------------|
+| `project.active_sessions` | length > 0 | Include "Continue [name]" for EACH session |
+| `authenticated` | false | Disable query/session options, recommend status |
+| `suggestion.operation` | set | Mark as "(Recommended)" |
+| `operations[].available` | false | Show option as disabled with `reason` |
+
+#### Correct vs Incorrect Examples
+
+**When `project.active_sessions = ["wasm-research", "api-design"]`:**
+
+✅ **CORRECT:**
+```json
+{
+  "options": [
+    {"label": "Continue 'wasm-research'", "description": "Resume your active research session"},
+    {"label": "Continue 'api-design'", "description": "Resume your API design session"},
+    {"label": "Start new research", "description": "Create a new query or session"},
+    {"label": "Search past research", "description": "Find previously cached results"}
+  ]
+}
+```
+
+❌ **WRONG:**
+```json
+{
+  "options": [
+    {"label": "Research a new topic", "description": "..."},
+    {"label": "Manage research sessions", "description": "..."},
+    {"label": "Search past research", "description": "..."}
+  ]
+}
+```
+
+**When `authenticated = false`:**
+
+✅ **CORRECT:**
+```json
+{
+  "options": [
+    {"label": "Check system status (Recommended)", "description": "Authenticate before using Gemini"},
+    {"label": "Search past research", "description": "Search 6 indexed entries (works offline)"}
+  ]
+}
+```
+
+❌ **WRONG:** Showing "Research a new topic" as available when auth is required.
+
+#### Anti-Patterns (Do NOT Do This)
+
+- ❌ Presenting generic "Manage sessions" when you could say "Continue 'wasm-research'"
+- ❌ Asking "What would you like to do?" without first checking launcher state
+- ❌ Showing research options as available when `authenticated = false`
+- ❌ Ignoring `suggestion.operation` and not marking it as recommended
+- ❌ Using the static option table (Question 1) without adapting to current state
 
 **Example flow:**
 ```
