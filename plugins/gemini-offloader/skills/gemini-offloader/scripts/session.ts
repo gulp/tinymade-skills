@@ -31,17 +31,47 @@ import {
   estimateTokens,
   getProjectHash,
   hashContent,
-  type OffloadMetadata
+  getGeminiProjectHash,
+  findSessionFile,
+  parseGeminiSession,
+  listGeminiSessionFiles,
+  getMostRecentSession,
+  verifySessionExists as verifySessionExistsOnDisk,
+  type OffloadMetadata,
+  type SessionMapping,
+  type GeminiSessionFile
 } from "./state.ts";
 import { indexOffload } from "./memory.ts";
 
+/**
+ * Session state with enhanced session tracking.
+ * Supports both legacy (index-only) and new (SessionMapping) formats.
+ */
 interface SessionState {
-  named_sessions: Record<string, number>;
+  named_sessions: Record<string, number | SessionMapping>;
   last_used: {
-    session: { type: string; name?: string; index?: number };
+    session: { type: string; name?: string; index?: number; sessionId?: string };
     timestamp: string;
     prompt_preview: string;
   } | null;
+}
+
+/**
+ * Check if a session mapping is the legacy format (just an index number)
+ */
+function isLegacyMapping(mapping: number | SessionMapping): mapping is number {
+  return typeof mapping === "number";
+}
+
+/**
+ * Extract session index from a mapping (handles both legacy and new formats)
+ */
+function getSessionIndex(mapping: number | SessionMapping): number | null {
+  if (isLegacyMapping(mapping)) {
+    return mapping;
+  }
+  // New format doesn't store index - we resolve dynamically
+  return null;
 }
 
 interface SessionInfo {
@@ -131,6 +161,107 @@ async function verifySession(geminiPath: string, index: number): Promise<{
     exists: !!session,
     session,
     availableSessions: sessions
+  };
+}
+
+/**
+ * Resolve a sessionId to its current index by matching session files.
+ *
+ * This is the key function for persistent session tracking:
+ * 1. Get list of sessions from gemini --list-sessions
+ * 2. For each session index, find its session file
+ * 3. Parse the session file to get sessionId
+ * 4. Return matching index
+ *
+ * Returns null if session not found (purged by gemini-cli)
+ */
+async function sessionIdToIndex(
+  sessionId: string,
+  geminiProjectHash: string,
+  geminiPath: string
+): Promise<{ index: number; sessionFile: string } | null> {
+  // Get all session files from gemini's storage
+  const sessionFiles = await listGeminiSessionFiles(geminiProjectHash);
+
+  if (sessionFiles.length === 0) {
+    return null;
+  }
+
+  // Find the session with matching sessionId
+  for (const { path, parsed } of sessionFiles) {
+    if (parsed.sessionId === sessionId) {
+      // Now we need to find what index gemini-cli assigns to this session
+      // gemini --list-sessions shows sessions in a specific order
+      // The order matches the file listing (most recent first = index 0)
+      const sessions = await listSessions(geminiPath);
+
+      // Map session files to their indices
+      // gemini-cli lists sessions newest-first, matching our listGeminiSessionFiles order
+      const sessionFileIndex = sessionFiles.findIndex(s => s.parsed.sessionId === sessionId);
+
+      if (sessionFileIndex !== -1 && sessionFileIndex < sessions.length) {
+        return {
+          index: sessions[sessionFileIndex].index,
+          sessionFile: path
+        };
+      }
+
+      // Fallback: session file exists but not in --list-sessions
+      // This can happen if gemini-cli has internal limits
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Resolve a session mapping to a usable index.
+ * Handles both legacy (index-only) and new (sessionId-based) formats.
+ */
+async function resolveSessionMapping(
+  mapping: number | SessionMapping,
+  geminiPath: string
+): Promise<{
+  index: number;
+  sessionId: string | null;
+  sessionFile: string | null;
+  isLegacy: boolean;
+  resolved: boolean;
+}> {
+  if (isLegacyMapping(mapping)) {
+    // Legacy format: just verify the index exists
+    const verification = await verifySession(geminiPath, mapping);
+    return {
+      index: mapping,
+      sessionId: null,
+      sessionFile: null,
+      isLegacy: true,
+      resolved: verification.exists
+    };
+  }
+
+  // New format: resolve sessionId to current index
+  const geminiProjectHash = mapping.geminiProjectHash;
+  const resolution = await sessionIdToIndex(mapping.sessionId, geminiProjectHash, geminiPath);
+
+  if (resolution) {
+    return {
+      index: resolution.index,
+      sessionId: mapping.sessionId,
+      sessionFile: resolution.sessionFile,
+      isLegacy: false,
+      resolved: true
+    };
+  }
+
+  // Session file no longer exists
+  return {
+    index: -1,
+    sessionId: mapping.sessionId,
+    sessionFile: mapping.sessionFile,
+    isLegacy: false,
+    resolved: false
   };
 }
 
@@ -369,13 +500,45 @@ async function cmdList() {
 
   const sessions = await listSessions(geminiPath);
   const state = await loadState();
+  const geminiProjectHash = getGeminiProjectHash();
 
-  // Enhance with named session info
-  for (const session of sessions) {
-    for (const [name, idx] of Object.entries(state.named_sessions)) {
-      if (idx === session.index) {
+  // Build enhanced named sessions info
+  const namedSessionsEnhanced: Record<string, {
+    sessionId?: string;
+    index?: number;
+    isLegacy: boolean;
+    exists: boolean;
+  }> = {};
+
+  for (const [name, mapping] of Object.entries(state.named_sessions)) {
+    if (isLegacyMapping(mapping)) {
+      // Legacy format - try to find by index
+      const exists = sessions.some(s => s.index === mapping);
+      namedSessionsEnhanced[name] = {
+        index: mapping,
+        isLegacy: true,
+        exists
+      };
+      // Attach name to session if it exists
+      const session = sessions.find(s => s.index === mapping);
+      if (session) {
         session.name = name;
-        break;
+      }
+    } else {
+      // New format - resolve sessionId to index
+      const resolution = await sessionIdToIndex(mapping.sessionId, geminiProjectHash, geminiPath);
+      namedSessionsEnhanced[name] = {
+        sessionId: mapping.sessionId,
+        index: resolution?.index,
+        isLegacy: false,
+        exists: resolution !== null
+      };
+      // Attach name to session if found
+      if (resolution) {
+        const session = sessions.find(s => s.index === resolution.index);
+        if (session) {
+          session.name = name;
+        }
       }
     }
   }
@@ -384,6 +547,7 @@ async function cmdList() {
     action: "list",
     sessions,
     named_sessions: state.named_sessions,
+    named_sessions_resolved: namedSessionsEnhanced,
     last_used: state.last_used,
     success: true
   };
@@ -397,70 +561,110 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
 
   const state = await loadState();
   let resume: string | number = "latest";
-  let sessionInfo: { type: string; name?: string; index?: number } = { type: "latest" };
+  let sessionInfo: { type: string; name?: string; index?: number; sessionId?: string } = { type: "latest" };
   let persistenceName: string | null = null;
+  let resolvedSessionId: string | null = null;
 
   if (args.name) {
+    // Named session lookup with sessionId resolution
     if (!(args.name in state.named_sessions)) {
       return {
         success: false,
         error: `Named session '${args.name}' not found. Use 'create' first.`
       };
     }
-    resume = state.named_sessions[args.name];
-    sessionInfo = { type: "named", name: args.name, index: resume };
+
+    const mapping = state.named_sessions[args.name];
     persistenceName = args.name;
-  } else if (args.index !== undefined) {
-    resume = args.index;
-    sessionInfo = { type: "indexed", index: resume };
-    // Look up name by index or use fallback
-    for (const [name, idx] of Object.entries(state.named_sessions)) {
-      if (idx === args.index) {
-        persistenceName = name;
-        break;
-      }
-    }
-    if (!persistenceName) {
-      persistenceName = `session-${args.index}`;
-    }
-  } else {
-    // "latest" mode - try to find the name for latest session
-    if (state.last_used?.session.name) {
-      persistenceName = state.last_used.session.name;
-    } else {
-      persistenceName = "latest";
-    }
-  }
 
-  // Verify session exists before attempting to resume (skip for "latest")
-  if (typeof resume === "number") {
-    const verification = await verifySession(geminiPath, resume);
-    if (!verification.exists) {
-      // Clean up stale mapping if this was a named session
-      if (args.name && args.name in state.named_sessions) {
-        delete state.named_sessions[args.name];
-        await saveState(state);
-      }
+    // Resolve the mapping to a usable index
+    const resolution = await resolveSessionMapping(mapping, geminiPath);
 
-      const availableList = verification.availableSessions.length > 0
-        ? verification.availableSessions.map(s => `  ${s.index}: ${s.description.slice(0, 60)}`).join("\n")
+    if (!resolution.resolved) {
+      // Session no longer exists - clean up stale mapping
+      delete state.named_sessions[args.name];
+      await saveState(state);
+
+      const sessions = await listSessions(geminiPath);
+      const availableList = sessions.length > 0
+        ? sessions.map(s => `  ${s.index}: ${s.description.slice(0, 60)}`).join("\n")
         : "  (no sessions available)";
 
       return {
         action: "continue",
-        session: sessionInfo,
+        session: { type: "named", name: args.name, sessionId: resolution.sessionId },
         success: false,
-        error: `Session ${resume} no longer exists (purged by gemini-cli)`,
+        error: resolution.isLegacy
+          ? `Session index no longer exists (purged by gemini-cli)`
+          : `Session ${resolution.sessionId?.slice(0, 8)}... no longer exists (purged by gemini-cli)`,
         diagnostic: {
           type: "stale_session" as const,
-          message: `Session index ${resume}${args.name ? ` ('${args.name}')` : ""} was purged. Named mapping has been cleaned up.`,
-          suggestion: `Create a new session with 'create --name "${args.name || "new-session"}" --prompt "..."'`
+          message: resolution.isLegacy
+            ? `Legacy session mapping for '${args.name}' was purged. Mapping cleaned up.`
+            : `Session ${resolution.sessionId} ('${args.name}') was purged. Session file: ${resolution.sessionFile}`,
+          suggestion: `Create a new session with 'create --name "${args.name}" --prompt "..."'`
+        },
+        available_sessions: sessions.map(s => ({
+          index: s.index,
+          description: s.description.slice(0, 80)
+        }))
+      };
+    }
+
+    resume = resolution.index;
+    resolvedSessionId = resolution.sessionId;
+    sessionInfo = {
+      type: "named",
+      name: args.name,
+      index: resolution.index,
+      sessionId: resolution.sessionId || undefined
+    };
+
+  } else if (args.index !== undefined) {
+    // Direct index access (legacy behavior)
+    resume = args.index;
+    sessionInfo = { type: "indexed", index: resume };
+
+    // Look up name by checking all mappings
+    for (const [name, mapping] of Object.entries(state.named_sessions)) {
+      if (isLegacyMapping(mapping)) {
+        if (mapping === args.index) {
+          persistenceName = name;
+          break;
+        }
+      }
+      // For new mappings, we can't reliably match by index since indices are volatile
+    }
+    if (!persistenceName) {
+      persistenceName = `session-${args.index}`;
+    }
+
+    // Verify the index exists
+    const verification = await verifySession(geminiPath, resume);
+    if (!verification.exists) {
+      return {
+        action: "continue",
+        session: sessionInfo,
+        success: false,
+        error: `Session index ${resume} no longer exists`,
+        diagnostic: {
+          type: "stale_session" as const,
+          message: `Session index ${resume} was purged by gemini-cli.`,
+          suggestion: `Use 'list' to see available sessions, or 'create' for a new one.`
         },
         available_sessions: verification.availableSessions.map(s => ({
           index: s.index,
           description: s.description.slice(0, 80)
         }))
       };
+    }
+
+  } else {
+    // "latest" mode
+    if (state.last_used?.session.name) {
+      persistenceName = state.last_used.session.name;
+    } else {
+      persistenceName = "latest";
     }
   }
 
@@ -475,6 +679,13 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
       exitCode,
       diagnostic
     };
+  }
+
+  // Update mapping if we have a sessionId (increase turn count)
+  if (args.name && !isLegacyMapping(state.named_sessions[args.name])) {
+    const mapping = state.named_sessions[args.name] as SessionMapping;
+    mapping.lastTurn += 1;
+    mapping.lastPromptPreview = args.prompt.slice(0, 100);
   }
 
   // Update last used
@@ -501,6 +712,7 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
     persisted: persistence.persisted,
     indexed: persistence.indexed,
     turn: persistence.turnNumber,
+    sessionId: resolvedSessionId,
     exitCode,
     diagnostic,
     success: true
@@ -526,32 +738,88 @@ async function cmdCreate(args: { name: string; prompt: string }) {
     };
   }
 
-  // Get the new session index (most recent is 0)
-  const sessions = await listSessions(geminiPath);
-  const newIndex = sessions.length > 0 ? sessions[0].index : 0;
+  // Get gemini's project hash for this directory
+  const geminiProjectHash = getGeminiProjectHash();
 
-  // Save named mapping
+  // Get the new session (most recent one contains our new session)
+  const mostRecent = await getMostRecentSession(geminiProjectHash);
+
+  if (!mostRecent) {
+    // Fallback to legacy behavior if we can't find the session file
+    const sessions = await listSessions(geminiPath);
+    const newIndex = sessions.length > 0 ? sessions[0].index : 0;
+
+    const state = await loadState();
+    state.named_sessions[args.name] = newIndex;  // Legacy format
+    state.last_used = {
+      session: { type: "named", name: args.name, index: newIndex },
+      timestamp: new Date().toISOString(),
+      prompt_preview: args.prompt.slice(0, 100)
+    };
+    await saveState(state);
+
+    const persistence = await persistSessionTurn({
+      sessionName: args.name,
+      prompt: args.prompt,
+      response: response!,
+      geminiIndex: newIndex,
+      isNewSession: true
+    });
+
+    return {
+      action: "create",
+      session: { name: args.name, index: newIndex },
+      response,
+      persisted: persistence.persisted,
+      indexed: persistence.indexed,
+      turn: persistence.turnNumber,
+      exitCode,
+      diagnostic,
+      success: true,
+      warning: "Could not capture sessionId - using legacy index mapping"
+    };
+  }
+
+  // Create enhanced session mapping with persistent sessionId
+  const sessionMapping: SessionMapping = {
+    sessionId: mostRecent.parsed.sessionId,
+    sessionFile: mostRecent.path,
+    geminiProjectHash,
+    createdAt: new Date().toISOString(),
+    lastTurn: 1,
+    lastPromptPreview: args.prompt.slice(0, 100)
+  };
+
+  // Save enhanced mapping
   const state = await loadState();
-  state.named_sessions[args.name] = newIndex;
+  state.named_sessions[args.name] = sessionMapping;
   state.last_used = {
-    session: { type: "named", name: args.name, index: newIndex },
+    session: { type: "named", name: args.name, sessionId: mostRecent.parsed.sessionId },
     timestamp: new Date().toISOString(),
     prompt_preview: args.prompt.slice(0, 100)
   };
   await saveState(state);
+
+  // Resolve current index for persistence
+  const sessions = await listSessions(geminiPath);
+  const currentIndex = sessions.length > 0 ? sessions[0].index : 0;
 
   // Persist session turn and index in mem0
   const persistence = await persistSessionTurn({
     sessionName: args.name,
     prompt: args.prompt,
     response: response!,
-    geminiIndex: newIndex,
+    geminiIndex: currentIndex,
     isNewSession: true
   });
 
   return {
     action: "create",
-    session: { name: args.name, index: newIndex },
+    session: {
+      name: args.name,
+      sessionId: mostRecent.parsed.sessionId,
+      sessionFile: mostRecent.path
+    },
     response,
     persisted: persistence.persisted,
     indexed: persistence.indexed,
@@ -568,16 +836,31 @@ async function cmdDelete(args: { index: number }) {
     return { success: false, error: "gemini-cli not found" };
   }
 
+  const geminiProjectHash = getGeminiProjectHash();
+
   try {
     await $`${geminiPath} --delete-session ${args.index}`;
 
-    // Remove from named sessions if exists
+    // Remove from named sessions if exists (handle both legacy and new formats)
     const state = await loadState();
     const removedNames: string[] = [];
-    for (const [name, idx] of Object.entries(state.named_sessions)) {
-      if (idx === args.index) {
-        removedNames.push(name);
-        delete state.named_sessions[name];
+    const removedSessionIds: string[] = [];
+
+    for (const [name, mapping] of Object.entries(state.named_sessions)) {
+      if (isLegacyMapping(mapping)) {
+        // Legacy: check if index matches
+        if (mapping === args.index) {
+          removedNames.push(name);
+          delete state.named_sessions[name];
+        }
+      } else {
+        // New format: resolve sessionId to current index and check if it matches
+        const resolution = await sessionIdToIndex(mapping.sessionId, geminiProjectHash, geminiPath);
+        if (resolution && resolution.index === args.index) {
+          removedNames.push(name);
+          removedSessionIds.push(mapping.sessionId);
+          delete state.named_sessions[name];
+        }
       }
     }
     await saveState(state);
@@ -586,6 +869,7 @@ async function cmdDelete(args: { index: number }) {
       action: "delete",
       index: args.index,
       removed_names: removedNames,
+      removed_session_ids: removedSessionIds,
       success: true
     };
   } catch (e) {
@@ -597,6 +881,72 @@ async function cmdDelete(args: { index: number }) {
   }
 }
 
+/**
+ * Migrate legacy session mappings (index-only) to new format (sessionId-based)
+ */
+async function cmdMigrate() {
+  const geminiPath = await findGemini();
+  if (!geminiPath) {
+    return { success: false, error: "gemini-cli not found" };
+  }
+
+  const state = await loadState();
+  const geminiProjectHash = getGeminiProjectHash();
+  const sessionFiles = await listGeminiSessionFiles(geminiProjectHash);
+  const sessions = await listSessions(geminiPath);
+
+  const migrated: string[] = [];
+  const failed: Array<{ name: string; reason: string }> = [];
+  const alreadyNew: string[] = [];
+
+  for (const [name, mapping] of Object.entries(state.named_sessions)) {
+    if (!isLegacyMapping(mapping)) {
+      alreadyNew.push(name);
+      continue;
+    }
+
+    const legacyIndex = mapping;
+
+    // Find the session file that corresponds to this index
+    // Indices correspond to position in the sorted session list
+    if (legacyIndex >= sessionFiles.length) {
+      failed.push({ name, reason: `Index ${legacyIndex} out of range (${sessionFiles.length} sessions)` });
+      continue;
+    }
+
+    const sessionFile = sessionFiles[legacyIndex];
+    if (!sessionFile) {
+      failed.push({ name, reason: `Could not find session file for index ${legacyIndex}` });
+      continue;
+    }
+
+    // Create new mapping
+    const newMapping: SessionMapping = {
+      sessionId: sessionFile.parsed.sessionId,
+      sessionFile: sessionFile.path,
+      geminiProjectHash,
+      createdAt: sessionFile.parsed.startTime,
+      lastTurn: Math.ceil(sessionFile.parsed.messageCount / 2),  // Estimate turns
+      lastPromptPreview: sessionFile.parsed.lastMessagePreview
+    };
+
+    state.named_sessions[name] = newMapping;
+    migrated.push(name);
+  }
+
+  if (migrated.length > 0) {
+    await saveState(state);
+  }
+
+  return {
+    action: "migrate",
+    migrated,
+    already_new: alreadyNew,
+    failed,
+    success: true
+  };
+}
+
 async function main() {
   const args = Bun.argv.slice(2);
   const command = args[0];
@@ -604,7 +954,7 @@ async function main() {
   if (!command) {
     console.log(JSON.stringify({
       success: false,
-      error: "Usage: session.ts <list|create|continue|resume|delete> [options]"
+      error: "Usage: session.ts <list|create|continue|resume|delete|migrate> [options]"
     }, null, 2));
     process.exit(1);
   }
@@ -662,6 +1012,9 @@ async function main() {
       } else {
         result = await cmdDelete({ index: opts.index as number });
       }
+      break;
+    case "migrate":
+      result = await cmdMigrate();
       break;
     default:
       result = { success: false, error: `Unknown command: ${command}` };

@@ -110,6 +110,34 @@ export interface CacheLookupResult {
 }
 
 // ============================================================================
+// Gemini-CLI Session Types
+// ============================================================================
+
+/**
+ * Enhanced session mapping that stores persistent sessionId instead of volatile index
+ */
+export interface SessionMapping {
+  sessionId: string;           // gemini-cli's UUID (persistent)
+  sessionFile: string;         // Full path to session-*.json
+  geminiProjectHash: string;   // gemini-cli's project hash (SHA256 of cwd)
+  createdAt: string;           // ISO timestamp
+  lastTurn: number;            // Track turn count
+  lastPromptPreview: string;   // First 100 chars of last prompt
+}
+
+/**
+ * Parsed gemini-cli session file
+ */
+export interface GeminiSessionFile {
+  sessionId: string;
+  projectHash: string;
+  startTime: string;
+  lastUpdated: string;
+  messageCount: number;
+  lastMessagePreview: string;
+}
+
+// ============================================================================
 // Constants
 // ============================================================================
 
@@ -647,4 +675,169 @@ export function getSourcePath(includeDirs?: string): string {
   if (!includeDirs) return "stdin";
   const dirs = includeDirs.split(",").map(d => d.trim());
   return dirs.length === 1 ? dirs[0] : dirs.join(", ");
+}
+
+// ============================================================================
+// Gemini-CLI Session Management
+// ============================================================================
+
+const GEMINI_DIR = join(homedir(), ".gemini", "tmp");
+
+/**
+ * Get gemini-cli's project hash for a directory.
+ * gemini-cli uses SHA256 of the absolute path.
+ */
+export function getGeminiProjectHash(cwd?: string): string {
+  const path = cwd || process.cwd();
+  return createHash("sha256").update(path).digest("hex");
+}
+
+/**
+ * Get the gemini chats directory for a project
+ */
+export function getGeminiChatsDir(geminiProjectHash: string): string {
+  return join(GEMINI_DIR, geminiProjectHash, "chats");
+}
+
+/**
+ * Find a session file by sessionId in the gemini chats directory.
+ * Session files are named: session-{timestamp}-{uuid_prefix}.json
+ * where uuid_prefix is the first 8 chars of sessionId.
+ */
+export async function findSessionFile(
+  sessionId: string,
+  geminiProjectHash: string
+): Promise<string | null> {
+  const chatsDir = getGeminiChatsDir(geminiProjectHash);
+
+  if (!existsSync(chatsDir)) {
+    return null;
+  }
+
+  const uuidPrefix = sessionId.slice(0, 8);
+
+  try {
+    const files = readdirSync(chatsDir);
+
+    // First try to find by UUID prefix in filename (fast path)
+    for (const file of files) {
+      if (file.startsWith("session-") && file.includes(uuidPrefix) && file.endsWith(".json")) {
+        const fullPath = join(chatsDir, file);
+        // Verify the sessionId matches
+        const parsed = await parseGeminiSession(fullPath);
+        if (parsed && parsed.sessionId === sessionId) {
+          return fullPath;
+        }
+      }
+    }
+
+    // Fallback: scan all session files (in case filename format changes)
+    for (const file of files) {
+      if (file.startsWith("session-") && file.endsWith(".json")) {
+        const fullPath = join(chatsDir, file);
+        const parsed = await parseGeminiSession(fullPath);
+        if (parsed && parsed.sessionId === sessionId) {
+          return fullPath;
+        }
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Parse a gemini-cli session file to extract metadata
+ */
+export async function parseGeminiSession(filePath: string): Promise<GeminiSessionFile | null> {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const data = await Bun.file(filePath).json();
+
+    const messages = data.messages || [];
+    const lastMessage = messages.length > 0
+      ? messages[messages.length - 1].content?.slice(0, 100) || ""
+      : "";
+
+    return {
+      sessionId: data.sessionId,
+      projectHash: data.projectHash,
+      startTime: data.startTime,
+      lastUpdated: data.lastUpdated,
+      messageCount: messages.length,
+      lastMessagePreview: lastMessage
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * List all session files in a gemini project directory
+ */
+export async function listGeminiSessionFiles(
+  geminiProjectHash: string
+): Promise<Array<{ path: string; parsed: GeminiSessionFile }>> {
+  const chatsDir = getGeminiChatsDir(geminiProjectHash);
+
+  if (!existsSync(chatsDir)) {
+    return [];
+  }
+
+  const sessions: Array<{ path: string; parsed: GeminiSessionFile }> = [];
+
+  try {
+    const files = readdirSync(chatsDir)
+      .filter(f => f.startsWith("session-") && f.endsWith(".json"))
+      .sort()  // Sort by timestamp (embedded in filename)
+      .reverse();  // Most recent first
+
+    for (const file of files) {
+      const fullPath = join(chatsDir, file);
+      const parsed = await parseGeminiSession(fullPath);
+      if (parsed) {
+        sessions.push({ path: fullPath, parsed });
+      }
+    }
+
+    return sessions;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get the most recently created/updated session file
+ */
+export async function getMostRecentSession(
+  geminiProjectHash: string
+): Promise<{ path: string; parsed: GeminiSessionFile } | null> {
+  const sessions = await listGeminiSessionFiles(geminiProjectHash);
+
+  if (sessions.length === 0) {
+    return null;
+  }
+
+  // Sort by lastUpdated time (most recent first)
+  sessions.sort((a, b) =>
+    new Date(b.parsed.lastUpdated).getTime() - new Date(a.parsed.lastUpdated).getTime()
+  );
+
+  return sessions[0];
+}
+
+/**
+ * Verify a session still exists on disk
+ */
+export async function verifySessionExists(
+  sessionId: string,
+  geminiProjectHash: string
+): Promise<boolean> {
+  const sessionFile = await findSessionFile(sessionId, geminiProjectHash);
+  return sessionFile !== null;
 }

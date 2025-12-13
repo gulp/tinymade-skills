@@ -1,8 +1,9 @@
 ---
 name: subtask-session-id-tracking
 parent: h-implement-gemini-offloader-state-persistence
-status: pending
+status: completed
 created: 2025-12-13
+completed: 2025-12-14
 ---
 
 # Subtask: Track Gemini-CLI Native Session IDs
@@ -209,26 +210,26 @@ User: session.ts continue --name "wasm-research"
 
 ## Implementation Tasks
 
-- [ ] Add `getGeminiProjectHash()` function to state.ts
-- [ ] Add `findSessionFile()` function to session.ts
-- [ ] Add `parseGeminiSession()` function to session.ts
-- [ ] Add `sessionIdToIndex()` resolver to session.ts
-- [ ] Update `SessionState` interface with new fields
-- [ ] Modify `createSession()` to capture sessionId after creation
-- [ ] Modify `continueSession()` to use sessionId → index resolution
-- [ ] Add session existence verification before resume
-- [ ] Update state persistence to store sessionId
-- [ ] Add migration for existing state files (add sessionId field)
-- [ ] Update diagnostic messages with sessionId info
-- [ ] Test with session purge scenarios
+- [x] Add `getGeminiProjectHash()` function to state.ts
+- [x] Add `findSessionFile()` function to state.ts (moved from session.ts for better organization)
+- [x] Add `parseGeminiSession()` function to state.ts
+- [x] Add `sessionIdToIndex()` resolver to session.ts
+- [x] Update `SessionState` interface with new fields (supports both legacy and SessionMapping)
+- [x] Modify `cmdCreate()` to capture sessionId after creation
+- [x] Modify `cmdContinue()` to use sessionId → index resolution
+- [x] Add session existence verification before resume (`resolveSessionMapping()`)
+- [x] Update state persistence to store sessionId
+- [x] Add migration for existing state files (`cmdMigrate()` command)
+- [x] Update diagnostic messages with sessionId info
+- [x] Test with session purge scenarios
 
 ## Success Criteria
 
-- [ ] Sessions can be resumed reliably even after gemini-cli purges other sessions
-- [ ] SessionId stored in our state, not just volatile index
-- [ ] Session existence verified before resume attempt
-- [ ] Proper error messages when session truly gone (with recovery suggestions)
-- [ ] No more "wrong session resumed" bugs
+- [x] Sessions can be resumed reliably even after gemini-cli purges other sessions
+- [x] SessionId stored in our state, not just volatile index
+- [x] Session existence verified before resume attempt
+- [x] Proper error messages when session truly gone (with recovery suggestions)
+- [x] No more "wrong session resumed" bugs
 
 ## Files to Modify
 
