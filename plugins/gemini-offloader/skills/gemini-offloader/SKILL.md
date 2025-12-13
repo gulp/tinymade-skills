@@ -14,7 +14,7 @@ Delegate context-heavy work to Gemini via CLI with warm sessions for multi-turn 
 │                    Claude (Main Context)                     │
 │                                                             │
 │  1. User requests research                                  │
-│  2. Claude invokes bundled scripts (deterministic)          │
+│  2. Claude invokes bundled scripts (Bun - deterministic)    │
 │  3. Scripts return JSON → Claude presents results           │
 └───────────────────────┬─────────────────────────────────────┘
                         │
@@ -40,71 +40,70 @@ Delegate context-heavy work to Gemini via CLI with warm sessions for multi-turn 
 - File editing and manipulation
 - Tasks requiring direct conversation continuity
 
-## Bundled Scripts
+## Bundled Scripts (Bun/TypeScript)
 
 Execute these directly for deterministic, token-efficient operations.
 
 ### Check Status
 ```bash
-# Verify installation and auth
-python scripts/gemini_status.py
+bun run scripts/status.ts
 ```
 Output: `{"installed": true, "authenticated": true, "sessions": [...]}`
 
 ### Single Query
 ```bash
 # Basic query with JSON output
-python scripts/gemini_query.py --prompt "Explain WASM for backends"
+bun run scripts/query.ts --prompt "Explain WASM for backends"
 
 # With local directory context
-python scripts/gemini_query.py --prompt "Analyze architecture" --include-dirs ./src,./docs
+bun run scripts/query.ts --prompt "Analyze architecture" --include-dirs ./src,./docs
 
 # Save response to file
-python scripts/gemini_query.py --prompt "Research topic X" --output-file research.md
+bun run scripts/query.ts --prompt "Research topic X" --output research.md
 
 # Pipe content for summarization
-cat large-doc.md | python scripts/gemini_query.py --prompt "Summarize key points"
+cat large-doc.md | bun run scripts/query.ts --prompt "Summarize key points"
 ```
 
 ### Warm Sessions (Multi-turn Research)
 ```bash
 # List existing sessions
-python scripts/gemini_session.py list
+bun run scripts/session.ts list
 
 # Create named session for ongoing research
-python scripts/gemini_session.py create --name "wasm-research" --prompt "Research WebAssembly for server-side"
+bun run scripts/session.ts create --name "wasm-research" --prompt "Research WebAssembly for server-side"
 
 # Continue named session
-python scripts/gemini_session.py continue --name "wasm-research" --prompt "Compare Wasmtime vs Wasmer"
+bun run scripts/session.ts continue --name "wasm-research" --prompt "Compare Wasmtime vs Wasmer"
 
 # Continue latest session
-python scripts/gemini_session.py continue --prompt "Go deeper on performance"
+bun run scripts/session.ts continue --prompt "Go deeper on performance"
 
 # Resume specific session by index
-python scripts/gemini_session.py resume --index 2 --prompt "Continue from here"
+bun run scripts/session.ts resume --index 2 --prompt "Continue from here"
 
 # Delete old session
-python scripts/gemini_session.py delete --index 5
+bun run scripts/session.ts delete --index 5
 ```
 
 ### Persistent Memory (mem0.ai)
 ```bash
 # Check if mem0 is available
-python scripts/mem0_store.py status
+bun run scripts/memory.ts status
 
 # Store research finding
-python scripts/mem0_store.py add --user "research" --topic "wasm" \
+bun run scripts/memory.ts add --user "research" --topic "wasm" \
   --text "Key finding: Wasmtime has best cold-start performance at 0.5ms"
 
 # Search past research
-python scripts/mem0_store.py search --user "research" --query "WASM performance"
+bun run scripts/memory.ts search --user "research" --query "WASM performance"
 
 # Store gemini response directly
-python scripts/gemini_query.py -p "Research X" | python scripts/mem0_store.py store-response \
+bun run scripts/query.ts -p "Research X" | bun run scripts/memory.ts store-response \
   --user "research" --topic "topic-x"
 
 # Get all memories on a topic
-python scripts/mem0_store.py get --user "research"
+bun run scripts/memory.ts get --user "research"
 ```
 
 ## Workflows
@@ -112,41 +111,41 @@ python scripts/mem0_store.py get --user "research"
 ### One-Shot Research
 ```bash
 # Check status
-python scripts/gemini_status.py
+bun run scripts/status.ts
 
 # Execute query
-python scripts/gemini_query.py --prompt "Provide comprehensive 2024 overview of [TOPIC]: current state, key players, use cases, limitations, trajectory"
+bun run scripts/query.ts --prompt "Provide comprehensive 2024 overview of [TOPIC]: current state, key players, use cases, limitations, trajectory"
 ```
 
 ### Multi-Turn Deep Dive
 ```bash
 # Start named session
-python scripts/gemini_session.py create --name "deep-dive-X" \
+bun run scripts/session.ts create --name "deep-dive-X" \
   --prompt "I'm researching X. Give me an overview to start."
 
 # Follow up questions (context preserved)
-python scripts/gemini_session.py continue --name "deep-dive-X" \
+bun run scripts/session.ts continue --name "deep-dive-X" \
   --prompt "Go deeper on the performance characteristics"
 
-python scripts/gemini_session.py continue --name "deep-dive-X" \
+bun run scripts/session.ts continue --name "deep-dive-X" \
   --prompt "What are the main criticisms and limitations?"
 
 # Store final synthesis
-python scripts/gemini_session.py continue --name "deep-dive-X" \
+bun run scripts/session.ts continue --name "deep-dive-X" \
   --prompt "Synthesize everything into actionable recommendations" \
-  | python scripts/mem0_store.py store-response --user "research" --topic "X"
+  | bun run scripts/memory.ts store-response --user "research" --topic "X"
 ```
 
 ### Research with Memory Retrieval
 ```bash
 # Search past research first
-python scripts/mem0_store.py search --user "research" --query "topic keywords"
+bun run scripts/memory.ts search --user "research" --query "topic keywords"
 
 # If relevant memories found, include in new query
-python scripts/gemini_query.py --prompt "Building on prior research that [MEMORY], now explore [NEW ANGLE]"
+bun run scripts/query.ts --prompt "Building on prior research that [MEMORY], now explore [NEW ANGLE]"
 
 # Store new findings
-python scripts/mem0_store.py add --user "research" --topic "topic" \
+bun run scripts/memory.ts add --user "research" --topic "topic" \
   --text "New finding: ..."
 ```
 
@@ -168,8 +167,8 @@ python scripts/mem0_store.py add --user "research" --topic "topic" \
 | `gemini-cli not found` | `npm install -g @google/gemini-cli` |
 | `authentication required` | Run `gemini` interactively to login, or set `GEMINI_API_KEY` |
 | `rate limit exceeded` | Free tier: 60 req/min, 1000 req/day. Wait or use API key |
-| `mem0 not installed` | `pip install mem0ai` (requires OpenAI API key for embeddings) |
-| `session not found` | Use `gemini_session.py list` to see available sessions |
+| `mem0 not installed` | `bun add mem0ai` (requires OpenAI API key for embeddings) |
+| `session not found` | Use `session.ts list` to see available sessions |
 
 ## Installation
 
@@ -178,9 +177,16 @@ python scripts/mem0_store.py add --user "research" --topic "topic" \
 npm install -g @google/gemini-cli
 ```
 
+**For running scripts (Bun):**
+```bash
+# Bun is typically pre-installed with Claude Code
+# If not: curl -fsSL https://bun.sh/install | bash
+```
+
 **Optional (for mem0 memory):**
 ```bash
-pip install mem0ai
+cd plugins/gemini-offloader/skills/gemini-offloader
+bun add mem0ai
 export OPENAI_API_KEY="..."  # Required for mem0 embeddings
 ```
 
@@ -191,3 +197,4 @@ export OPENAI_API_KEY="..."  # Required for mem0 embeddings
 - Warm sessions persist across CLI invocations (per-project)
 - mem0 provides semantic search across all research sessions
 - Scripts output JSON for reliable parsing - no code regeneration needed
+- Bun scripts start faster than Python (~10ms vs ~100ms cold start)
