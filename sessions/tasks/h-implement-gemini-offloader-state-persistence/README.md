@@ -1,7 +1,7 @@
 ---
 name: h-implement-gemini-offloader-state-persistence
 branch: feature/gemini-offloader-state-persistence
-status: completed
+status: in_progress
 created: 2024-12-13
 ---
 
