@@ -11,6 +11,11 @@ sessions/.archived/
 !.para/Dockerfile.custom
 !.para/config.json
 
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
 # Local environment
 .envrc
 
