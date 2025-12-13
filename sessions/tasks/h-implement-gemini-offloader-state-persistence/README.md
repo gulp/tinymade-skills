@@ -205,18 +205,32 @@ if (import.meta.main) {
 
 **2. Plugin Cache Invalidation for SKILL.md Changes**
 
-The tinymade-skills plugin system caches SKILL.md in Claude Code's plugin cache. When SKILL.md is updated (e.g., adding new documentation, updating architecture diagrams), Claude Code does not automatically see the changes. This wasn't documented in the original context because it's a plugin system behavior, not a gemini-offloader behavior.
+During skill activation debugging, we discovered that Claude Code's plugin system reads SKILL.md from the git `master` branch, not from the working directory. This wasn't documented in the original context because it's a plugin system behavior, not a gemini-offloader behavior.
 
-**Actual workflow required:**
+**Critical constraints discovered:**
+- Plugin cache is populated from `master` branch content when plugin is installed
+- Uncommitted changes to SKILL.md are **not visible** to Claude Code
+- Changes on feature branches are **not visible** until merged to master
+- Cache location: `~/.claude/plugins/cache/{marketplace}/{plugin}/{version}/`
+
+**Required workflow for SKILL.md updates:**
 ```bash
-# After editing SKILL.md
-rm -rf ~/.config/claude-code/plugin-cache
-# Then let Claude Code reinstall the plugin on next use
+# 1. Commit changes to feature branch
+git commit -m "Update SKILL.md documentation"
+
+# 2. Merge to master (or push to master)
+git checkout master
+git merge feature-branch
+
+# 3. Reinstall plugin (not just clear cache)
+# In Claude Code: /plugin uninstall tinymade-skills/gemini-offloader
+# Then: /plugin install tinymade-skills/gemini-offloader
+
+# 4. Restart Claude Code
+# Required for plugin changes to fully take effect
 ```
 
-Without this step, Claude may reference stale SKILL.md content and provide outdated usage instructions to users. This affects development iteration speed when updating documentation.
-
-**Impact:** Future implementations that add new scripts or modify workflows need to remember to clear plugin cache for documentation updates to take effect.
+**Impact:** This significantly affects development workflow - documentation updates require a full commit → merge → reinstall → restart cycle before Claude sees changes. During skill development, SKILL.md updates won't be visible in testing until this full workflow is completed. This was the root cause of the "On Activation" section not appearing during Session 8 testing.
 
 **3. AskUserQuestion Tool Validation Requirements**
 
@@ -480,3 +494,43 @@ getAll(config: {userId, ...})
 
 #### Discovered
 - **sync.ts had duplicate, incorrect mem0 initialization**: The sync.ts file contained its own `getMem0Memory()` implementation that didn't use the API key from environment and passed strings directly to memory.add() instead of the required `Array<Message>` format. This caused silent failures where rebuild appeared to succeed but entries weren't actually added to mem0.
+
+### 2025-12-13 (Session 8)
+
+#### Completed
+- **Debugged SKILL.md "On Activation" section not loading**:
+  - Discovered plugin cache reads from master branch, not working directory
+  - Uncommitted changes aren't picked up by Claude Code
+  - Documented workflow: commit to master, reinstall plugin (clear cache), restart Claude Code
+- **Fixed project auto-initialization bug**:
+  - Problem: `filter-local` returned 0 results while global had 6 entries
+  - Root cause: Launcher returned `project: null` because project directory didn't exist
+  - Added `isProjectDirectory()` guard to check for `.git` before initialization
+  - Added `getOrCreateProject()` to auto-initialize project on first access
+  - Updated `launcher.ts` to auto-create project directory for valid git repos
+  - Updated `filter-local` in `memory.ts` to show hint when no local results but global entries exist
+- **Successfully tested AskUserQuestion flow** after skill loaded with "On Activation" section
+- Committed fix: `5f9f5c2`
+
+#### Decisions
+- Auto-initialize project directories only for valid git repos (`.git` guard prevents non-project initialization)
+- Show helpful hint in `filter-local` output when no results for current project but global entries exist
+
+#### Discovered
+- **Plugin cache invalidation required for SKILL.md updates**: Claude Code caches SKILL.md from master branch. Development workflow requires committing changes to master and clearing plugin cache (`rm -rf ~/.config/claude-code/plugin-cache`) before Claude sees updates.
+
+## Subtasks
+
+### `subtask-session-id-tracking.md` (pending)
+
+**Problem:** Session management uses volatile indices from `gemini --list-sessions`, but gemini-cli assigns persistent UUIDs. When sessions are purged, indices shift and our mappings become invalid.
+
+**Solution:** Track gemini-cli's native `sessionId` UUIDs instead of volatile indices. Map sessionId → index dynamically before resume. Verify session file exists before attempting operations.
+
+**Key findings:**
+- gemini-cli stores sessions at `~/.gemini/tmp/{project_hash}/chats/session-*.json`
+- Each session file contains persistent `sessionId` (UUID), `projectHash`, `messages[]`
+- `gemini --resume` only accepts index or "latest", not sessionId (requires dynamic mapping)
+- Session files can be parsed to verify existence and map sessionId to current index
+
+See `subtask-session-id-tracking.md` for full investigation findings and implementation plan.
