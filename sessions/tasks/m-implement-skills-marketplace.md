@@ -1,8 +1,9 @@
 ---
 name: m-implement-skills-marketplace
 branch: feature/skills-marketplace
-status: in-progress
+status: done
 created: 2025-12-07
+completed: 2025-12-13
 ---
 
 # Initial Skills Marketplace Setup
@@ -367,7 +368,17 @@ alacritty --working-directory "$DIR" -e bash -lc 'claude "multi word prompt"' &
 - Autonomous agent requires BOTH bypass_mode AND explicit self-approval instructions in prompt template
 - Fresh worktrees need state file created before Claude starts, as it's created by hooks during startup otherwise
 
-#### Next Steps
-- Clean up test worktree and task file
-- Consider documenting autonomous agent patterns in plugin documentation
-- Potential enhancement: add --autonomous flag as convenience shortcut for --bypass-sessions --task
+### 2025-12-13
+#### Completed
+- Cleaned up test artifacts:
+  - Removed test worktrees (.trees/feature-test-autonomous, .trees/feature-sample-feature)
+  - Deleted m-test-autonomous-agent.md test task file
+  - Removed test-blocking-demo.txt
+  - Cleaned up plugins/plane/scripts/__pycache__
+- Updated .gitignore with Python cache patterns (__pycache__/, *.pyc, *.pyo)
+- Added --autonomous (-a) convenience flag to spawn_terminal.py:
+  - Requires --task (errors with clear message if missing)
+  - Implies --bypass-sessions automatically
+  - Outputs "Mode: AUTONOMOUS (self-approving agent)" in human-readable output
+  - Includes autonomous_mode: true in JSON output
+- Task marked complete - all success criteria met and enhancements implemented
