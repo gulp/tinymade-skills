@@ -448,14 +448,198 @@ A successful implementation will:
 
 ## Work Log
 
-- [2025-12-13] Task created from parked idea
-- [2025-12-13] Initial skill implemented using skill-creator workflow
-- [2025-12-13] Enhanced with bundled scripts following Plane skill pattern (Anthropic long-running agent recommendations):
-  - `scripts/gemini_status.py` - Installation and auth detection with JSON output
-  - `scripts/gemini_query.py` - Single query execution with piping support
-  - `scripts/gemini_session.py` - Warm session management (create, continue, resume, list, delete)
-  - `scripts/mem0_store.py` - mem0.ai vector store integration for persistent research memory
-  - Architecture diagram showing Claude → Scripts → Gemini/Sessions/mem0 flow
-  - Workflows: One-Shot Research, Multi-Turn Deep Dive, Research with Memory Retrieval
-  - All scripts output JSON for deterministic parsing (no code regeneration)
-  - Packaged as `gemini-offloader.skill` with 4 bundled scripts
+### 2025-12-13
+
+#### Completed
+- Created gemini-offloader skill with deterministic bundled scripts
+- Implemented warm session management and context preservation
+- Added mem0.ai vector store integration for persistent research memory
+- Registered plugin in .claude-plugin/marketplace.json
+- Created feature/gemini-context-offloading-skill branch with 3 commits
+
+#### Decisions
+- **TypeScript over Python**: Rewrote all scripts in TypeScript for Bun runtime (Anthropic acquired Bun, likely native to Claude Code)
+- **Bundled scripts pattern**: Following Plane skills architecture for deterministic execution without code regeneration
+- **Warm sessions**: Using gemini-cli's built-in session checkpointing with local state tracking
+- **mem0.ai integration**: Optional vector store for persistent memory across sessions
+
+#### Implementation Details
+
+**Bundled Scripts (TypeScript/Bun):**
+- `scripts/status.ts` - Installation/auth detection with JSON output
+- `scripts/query.ts` - Single query execution with stdin piping support
+- `scripts/session.ts` - Warm session management (create, continue, resume, list, delete)
+- `scripts/memory.ts` - mem0.ai vector store integration for research memory
+
+**SKILL.md Architecture:**
+- Three usage modes: One-Shot Research, Multi-Turn Deep Dive, Research with Memory Retrieval
+- Architecture diagram showing Claude → Scripts → Gemini/Sessions/mem0 flow
+- All scripts output JSON for deterministic parsing
+- No code regeneration - scripts are stable and tested
+
+**Git History:**
+- `de06fcc` - refactor(gemini-offloader): rewrite scripts in TypeScript for Bun
+- `4ce8008` - chore: update gitignore for python cache, local files, skill packages
+- `67a6b78` - feat(gemini-offloader): add context offloading skill with warm sessions and mem0
+
+#### Research Conducted
+- Studied Anthropic's long-running agent patterns via context-gathering agent
+- Analyzed Plane skills for bundled script architecture
+- Researched context preservation strategies in cc-sessions framework
+- Identified deterministic execution as key pattern for reliable skill operations
+
+---
+
+### Discovered During Implementation
+**Date: 2025-12-13 / Session: Context Refinement**
+
+During implementation, we discovered critical architectural patterns and technology choices that fundamentally changed the skill's design from the original conception. These discoveries should inform future skill development.
+
+#### Architectural Pivot: From Workflow to Bundled Scripts
+
+The original context manifest described a simple "workflow-based" skill where Claude would execute bash commands inline (`gemini -p "prompt"`). However, research into Anthropic's long-running agent patterns and the Plane skills architecture revealed that **bundled scripts** are the preferred pattern for reliable, deterministic skill operations.
+
+**Why this matters:** Skills that generate code on each invocation are:
+- Token-inefficient (regenerate same code repeatedly)
+- Error-prone (different formatting/bugs each time)
+- Difficult to test and maintain
+- Not aligned with Anthropic's recommended patterns
+
+**The Plane pattern:** Plane skills demonstrated bundled Python scripts that:
+- Output JSON for programmatic parsing
+- Handle one specific operation deterministically
+- Live with the skill in `skills/*/scripts/`
+- Are tested once, executed reliably forever
+
+This discovery led to completely rewriting the skill architecture.
+
+#### Bun as Native Runtime for Claude Code
+
+Mid-implementation, we discovered that **Anthropic acquired Bun** (the JavaScript/TypeScript runtime). This has major implications:
+
+**What this means:**
+- Bun is likely to become the native runtime for Claude Code skills
+- TypeScript/Bun scripts start ~10x faster than Python (10ms vs 100ms cold start)
+- Bun has built-in TypeScript support (no compilation step)
+- The `$` template literal for shell commands makes scripting elegant
+
+**Decision impact:** We rewrote all Python scripts to TypeScript/Bun. This is the first skill in this codebase to use Bun, establishing a pattern for future skills.
+
+**Example of Bun's elegance:**
+```typescript
+import { $ } from "bun";
+const geminiPath = await $`which gemini`.text();
+```
+
+Future skills should strongly consider TypeScript/Bun over Python for bundled scripts.
+
+#### gemini-cli Session Management Capabilities
+
+The original context mentioned gemini-cli's "conversation checkpointing" feature generically. During implementation, we discovered the actual CLI interface:
+
+**Session Management Flags:**
+- `--resume latest` or `--resume N` - Resume a specific session by index
+- `--list-sessions` - List all available sessions for current project
+- `--delete-session N` - Delete a session by index
+- Sessions are per-project (based on current directory)
+- Session 0 is always the most recent
+
+**Implementation pattern discovered:**
+```typescript
+// List sessions
+await $`${geminiPath} --list-sessions`
+
+// Resume session
+await $`${geminiPath} --resume latest -o json "Continue research"`
+
+// Create new session (just run without --resume)
+await $`${geminiPath} -o json "Start new research"`
+```
+
+**State management layer:** We added a JSON state file (`.gemini-offloader-sessions.json`) to track:
+- Named session mappings (user-friendly names → session indices)
+- Last used session info
+- Per-project or user-level state
+
+This pattern allows "warm sessions" where context is preserved across multiple research queries, critical for multi-turn deep dives.
+
+#### mem0.ai Integration Discovery
+
+The original context didn't mention mem0.ai. During research, we discovered:
+
+**mem0.ai capabilities:**
+- Node.js SDK available: `npm install mem0ai` (Bun-compatible)
+- Provides semantic search across all research sessions
+- Uses OpenAI embeddings (requires `OPENAI_API_KEY`)
+- Stores memories in vector database for retrieval
+
+**Use case:** After a Gemini research session, store key findings in mem0. Future sessions can search past research before asking new questions, building institutional knowledge over time.
+
+**Implementation pattern:**
+```typescript
+// Store finding
+await memory.add({
+  user_id: "research",
+  messages: [{ role: "user", content: "Key finding: ..." }]
+});
+
+// Search past research
+const memories = await memory.search({
+  user_id: "research",
+  query: "WASM performance"
+});
+```
+
+This is **optional** - the skill works without mem0, but it enables powerful long-term research memory.
+
+#### Updated Technical Details
+
+**Runtime Architecture:**
+- **Language:** TypeScript (not Python)
+- **Runtime:** Bun (not Node.js or Python)
+- **Script location:** `plugins/gemini-offloader/skills/gemini-offloader/scripts/*.ts`
+- **Output format:** All scripts output JSON to stdout
+
+**Session State Management:**
+- **State file:** `.gemini-offloader-sessions.json` (project-level) or `~/.config/gemini-offloader/sessions.json` (user-level)
+- **State schema:**
+  ```json
+  {
+    "named_sessions": { "session-name": session_index },
+    "last_used": {
+      "session": { "type": "named|indexed|latest", "name": "...", "index": N },
+      "timestamp": "ISO-8601",
+      "prompt_preview": "first 100 chars"
+    }
+  }
+  ```
+
+**Dependencies:**
+- **Required:** `@google/gemini-cli` (npm global install)
+- **Optional:** `mem0ai` (Bun local install, requires `OPENAI_API_KEY`)
+
+**Error Handling Patterns:**
+All scripts follow consistent error format:
+```json
+{
+  "success": false,
+  "error": "Human-readable error message",
+  "response": null
+}
+```
+
+Exit codes: 0 for success, 1 for failure.
+
+#### Lessons for Future Skill Development
+
+1. **Research first, implement second** - Using the context-gathering agent to study existing patterns (Plane skills, Anthropic's recommendations) prevented costly rewrites
+
+2. **Bun > Python for scripts** - Faster, more elegant, likely native to Claude Code going forward
+
+3. **Bundled scripts > Generated code** - Deterministic, testable, token-efficient
+
+4. **Session/state management matters** - For long-running research tasks, preserve context between invocations
+
+5. **JSON output always** - Makes parsing reliable, enables script composition
+
+6. **Optional enhancements** - mem0.ai integration is optional but powerful - design for graceful degradation
