@@ -7,6 +7,99 @@ description: Offload context-heavy tasks to Google Gemini via gemini-cli with wa
 
 Delegate context-heavy work to Gemini via CLI with warm sessions for multi-turn research and mem0 vector store for persistent memory.
 
+## On Activation
+
+When this skill is activated, **run launcher.ts first** to understand the current state and user intent:
+
+```bash
+bun run scripts/launcher.ts
+```
+
+Based on the output, use **AskUserQuestion** to clarify the user's intent:
+
+### Question 1: Primary Intent
+
+```
+"What would you like to do with Gemini?"
+```
+
+| Option | Description | Maps To |
+|--------|-------------|---------|
+| Research a new topic | Send a query with optional file context | `query.ts` |
+| Manage research sessions | Create, continue, or delete multi-turn sessions | `session.ts` |
+| Search past research | Find previously cached research | `memory.ts filter-local` |
+| Store or manage memories | Add findings, retrieve, or delete memories | `memory.ts` |
+| Check system status | Verify installation and authentication | `status.ts` |
+| Manage cache and sync | Stats, rebuild index, prune orphans | `sync.ts` |
+
+### Follow-up Questions (Based on Selection)
+
+**If "Research a new topic":**
+```
+"How should I configure this research?"
+Options:
+- Include local files? [Yes - ask which dirs / No]
+- Skip cache (force fresh)? [Yes / No]
+- Save full output to file? [Yes - ask filename / No]
+```
+
+**If "Manage research sessions":**
+```
+"Which session action?"
+Options:
+- List existing sessions
+- Create new session [ask: session name, initial prompt]
+- Continue existing session [show available sessions from launcher output]
+- Delete a session [show available sessions]
+```
+
+**If "Search past research":**
+```
+"How would you like to filter?"
+Options:
+- By time (last 7d, 2w, 1m, or specific date)
+- By session name
+- By source/file pattern
+- By keyword search
+- Search all projects (--global)
+Then ask: "What are you searching for?" or "Which session/time period?"
+```
+
+**If "Store or manage memories":**
+```
+"Which memory action?"
+Options:
+- Add a new memory [ask: user, topic, text]
+- Get all memories [ask: user]
+- Delete a memory [ask: memory ID]
+- Store a Gemini response [ask: user, topic]
+```
+
+**If "Manage cache and sync":**
+```
+"Which operation?"
+Options:
+- Show statistics
+- Check drift (filesystem vs index)
+- Rebuild index (re-index all cache)
+- Prune orphans (clean stale entries)
+```
+
+### Context-Aware Behavior
+
+The `launcher.ts` output includes a `suggestion` field. Use this to:
+- Pre-select the recommended option in AskUserQuestion
+- Skip questions when intent is obvious from user's request
+- Show relevant context (e.g., "You have 3 active sessions")
+
+**Example flow:**
+```
+User: "continue my wasm research"
+→ Skip Q1 (intent is clear: sessions)
+→ Show available sessions from launcher.project.active_sessions
+→ Ask which session to continue
+```
+
 ## Architecture
 
 ```
@@ -75,6 +168,22 @@ query.ts receives request
 
 Execute these directly for deterministic, token-efficient operations.
 
+### Launcher (Interactive Init)
+```bash
+bun run scripts/launcher.ts
+```
+Output: System state, available operations, and suggested action for AskUserQuestion flow.
+```json
+{
+  "ready": true,
+  "installed": true,
+  "authenticated": true,
+  "project": { "cache_entries": 5, "active_sessions": ["wasm-research"] },
+  "operations": [...],
+  "suggestion": { "operation": "sessions", "reason": "You have 1 active session" }
+}
+```
+
 ### Check Status
 ```bash
 bun run scripts/status.ts
@@ -139,19 +248,69 @@ bun run scripts/session.ts resume --index 2 --prompt "Continue from here"
 bun run scripts/session.ts delete --index 5
 ```
 
-### Persistent Memory (mem0.ai)
+**Session Persistence:** All session turns automatically persist to `~/.gemini_offloader/`:
+- Full responses saved as timestamped files: `full_response-{ISO8601}.md`
+- Summary updated after each turn
+- Indexed in mem0 with session metadata (searchable via `filter-local --session`)
+
+**Output Format:**
+
+Success response:
+```json
+{
+  "action": "continue",
+  "session": { "name": "wasm-research", "index": 0 },
+  "response": "Summary of response...",
+  "persisted": true,
+  "indexed": true,
+  "turn": 3,
+  "success": true,
+  "diagnostic": {
+    "type": "success",
+    "message": "Completed in 1234ms",
+    "suggestion": ""
+  }
+}
+```
+
+Error response with diagnostic:
+```json
+{
+  "success": false,
+  "error": "Session 0 no longer exists (purged by gemini-cli)",
+  "diagnostic": {
+    "type": "stale_session",
+    "message": "Session index 0 ('deep-dive') was purged. Named mapping has been cleaned up.",
+    "suggestion": "Create a new session with 'create --name \"deep-dive\" --prompt \"...\"'"
+  },
+  "available_sessions": [
+    { "index": 1, "description": "Research WebAssembly for server-side" },
+    { "index": 2, "description": "Compare Wasmtime vs Wasmer" }
+  ]
+}
+```
+
+**Diagnostic Types:**
+- `success` - Operation completed successfully
+- `timeout` - Request took too long (exit 124 or internal timeout)
+- `rate_limit` - Rate/quota throttling (exit 144)
+- `auth` - Authentication required or expired
+- `stale_session` - Session was purged by gemini-cli (auto-cleaned from mappings)
+- `unknown` - Other errors (check message field)
+
+### Persistent Memory (mem0)
 ```bash
-# Check if mem0 is available
+# Check mem0 status (shows current mode: hosted/local)
 bun run scripts/memory.ts status
 
-# Store research finding
+# Store research finding (works in both modes)
 bun run scripts/memory.ts add --user "research" --topic "wasm" \
   --text "Key finding: Wasmtime has best cold-start performance at 0.5ms"
 
-# Search past research
+# Search past research (semantic via mem0, works in both modes)
 bun run scripts/memory.ts search --user "research" --query "WASM performance"
 
-# Search local index (works without mem0)
+# Search local index (fallback when mem0 unavailable)
 bun run scripts/memory.ts search-local --query "WASM performance"
 
 # Store gemini response directly
@@ -160,6 +319,49 @@ bun run scripts/query.ts -p "Research X" | bun run scripts/memory.ts store-respo
 
 # Get all memories on a topic
 bun run scripts/memory.ts get --user "research"
+```
+
+**Dual-mode support:**
+- **Hosted mode**: Uses mem0.ai cloud API (requires MEM0_API_KEY)
+- **Local mode**: Uses mem0ai/oss with Groq LLM + Ollama embeddings (requires GROQ_API_KEY)
+- Both modes provide semantic search and vector memory
+- Local index always maintained as fallback
+
+### Filter Past Research
+```bash
+# Filter local index with various criteria
+bun run scripts/memory.ts filter-local --since 7d              # Last 7 days
+bun run scripts/memory.ts filter-local --since 2w              # Last 2 weeks
+bun run scripts/memory.ts filter-local --since 2024-12-01      # Since specific date
+bun run scripts/memory.ts filter-local --session "wasm-research"  # By session name
+bun run scripts/memory.ts filter-local --source "sessions/*"   # By source path pattern
+bun run scripts/memory.ts filter-local --topic "performance"   # By topic tag
+bun run scripts/memory.ts filter-local --query "memory"        # Keyword search
+bun run scripts/memory.ts filter-local --global                # Search all projects
+bun run scripts/memory.ts filter-local --limit 20              # Max results
+
+# Combine filters
+bun run scripts/memory.ts filter-local --since 1m --session "research" --query "wasm"
+```
+
+Output includes match reasons:
+```json
+{
+  "success": true,
+  "filters": { "since": "7d", "session": null, ... },
+  "count": 3,
+  "results": [
+    {
+      "id": "abc123",
+      "summary": "Research findings on WebAssembly...",
+      "timestamp": "2024-12-13T10:00:00Z",
+      "source_path": "session:wasm-research",
+      "session_name": "wasm-research",
+      "type": "research",
+      "match_reasons": ["after 7d"]
+    }
+  ]
+}
 ```
 
 ### State Persistence
@@ -179,6 +381,10 @@ bun run scripts/init.ts --repair
 
 # Reset config to defaults (keeps cached data)
 bun run scripts/init.ts --reset
+
+# Set mem0 mode
+bun run scripts/init.ts --mem0-mode hosted   # Use mem0.ai cloud API
+bun run scripts/init.ts --mem0-mode local    # Use self-hosted OSS stack
 ```
 
 Output:
@@ -291,16 +497,31 @@ bun run scripts/memory.ts add --user "research" --topic "topic" \
 
 ## Error Handling
 
-| Error | Resolution |
-|-------|------------|
-| `gemini-cli not found` | `npm install -g @google/gemini-cli` |
-| `authentication required` | Run `gemini` interactively to login, or set `GEMINI_API_KEY` |
-| `rate limit exceeded` | Free tier: 60 req/min, 1000 req/day. Wait or use API key |
-| `mem0 not installed` | `bun add mem0ai` (requires OpenAI API key for embeddings) |
-| `session not found` | Use `session.ts list` to see available sessions |
-| `exit code 124` | Timeout - context too large or slow response. Chunk your input. |
-| `exit code 144` | Rate/quota throttling - wait 20-60s before retrying |
-| `command hangs` | gemini-cli needs stdin. Use: `echo "" \| gemini ...` |
+All scripts return structured error responses with a `diagnostic` object containing:
+- `type` - Error category (timeout, rate_limit, auth, stale_session, unknown)
+- `message` - Detailed error description
+- `suggestion` - Actionable next steps
+
+| Error | Diagnostic Type | Resolution |
+|-------|-----------------|------------|
+| `gemini-cli not found` | N/A | `npm install -g @google/gemini-cli` |
+| `authentication required` | `auth` | Run `gemini` interactively to login, or set `GEMINI_API_KEY` |
+| `rate limit exceeded` | `rate_limit` | Free tier: 60 req/min, 1000 req/day. Wait 30-60s or use API key |
+| `mem0 not installed` | N/A | `bun add mem0ai` and set `MEM0_API_KEY` (hosted) or `GROQ_API_KEY` (local) |
+| `session not found` | `stale_session` | Check `available_sessions` in response or run `session.ts list` |
+| `exit code 124` | `timeout` | Timeout - context too large or slow response. Chunk your input. |
+| `exit code 144` | `rate_limit` | Rate/quota throttling - wait 30-60s before retrying |
+| `command hangs` | N/A | gemini-cli needs stdin. Use: `echo "" \| gemini ...` |
+
+**Stale Session Handling:**
+
+When a session is purged by gemini-cli, the script:
+1. Auto-detects staleness via pre-flight verification
+2. Cleans up invalid named mappings
+3. Returns `available_sessions` array with current sessions
+4. Provides suggestion to create new session or continue existing one
+
+See Warm Sessions section for diagnostic output examples.
 
 ## Rate Limiting & Best Practices
 
@@ -386,11 +607,31 @@ npm install -g @google/gemini-cli
 ```
 
 **Optional (for mem0 memory):**
+
+The skill supports two mem0 modes: **hosted** (mem0.ai cloud API) and **local** (self-hosted with Groq+Ollama).
+
+**Hosted mode** (default):
 ```bash
 cd plugins/gemini-offloader/skills/gemini-offloader
 bun add mem0ai
-export OPENAI_API_KEY="..."  # Required for mem0 embeddings
+export MEM0_API_KEY="..."  # Required for mem0.ai hosted API
 ```
+
+**Local mode** (self-hosted):
+```bash
+cd plugins/gemini-offloader/skills/gemini-offloader
+bun add mem0ai
+export GROQ_API_KEY="..."  # Required for LLM (Groq/llama-3.1-8b-instant)
+# Install Ollama and ensure nomic-embed-text model is available for embeddings
+```
+
+Configure the mode globally:
+```bash
+bun run scripts/init.ts --mem0-mode hosted   # Use mem0.ai cloud API
+bun run scripts/init.ts --mem0-mode local    # Use self-hosted OSS stack
+```
+
+Per-project mode overrides are supported via config.json.
 
 ## Notes
 
