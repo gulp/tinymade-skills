@@ -10,6 +10,7 @@ import { existsSync } from "fs";
 import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
+import { isProjectDirectory, getOrCreateProject, ensureProjectDir } from "./state";
 
 // State paths
 const BASE_DIR = join(homedir(), ".gemini_offloader");
@@ -184,21 +185,29 @@ async function getGlobalStats(): Promise<{
   return stats;
 }
 
-async function getProjectContext(projectHash: string): Promise<{
+async function getProjectContext(): Promise<{
   path: string;
   hash: string;
   cache_entries: number;
   active_sessions: string[];
+  auto_initialized: boolean;
 } | null> {
-  const projDir = join(PROJECTS_DIR, projectHash);
+  // Guard: only works in git project directories
+  if (!isProjectDirectory()) {
+    return null;
+  }
 
-  if (!existsSync(projDir)) return null;
+  // Auto-initialize project if needed
+  const project = await getOrCreateProject();
+  if (!project) return null;
 
+  const projDir = join(PROJECTS_DIR, project.hash);
   const context = {
     path: process.cwd(),
-    hash: projectHash,
+    hash: project.hash,
     cache_entries: 0,
     active_sessions: [] as string[],
+    auto_initialized: project.initialized,
   };
 
   try {
@@ -364,9 +373,8 @@ async function main() {
     // Get global stats
     result.global = await getGlobalStats();
 
-    // Get project context
-    const projectHash = await getProjectHash();
-    result.project = await getProjectContext(projectHash);
+    // Get project context (auto-initializes if valid git repo)
+    result.project = await getProjectContext();
 
     // Build operations
     result.operations = buildOperations(

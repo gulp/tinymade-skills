@@ -43,6 +43,8 @@ import {
   getProjectHash,
   getMem0Mode,
   getMem0LocalConfig,
+  isProjectDirectory,
+  getOrCreateProject,
   type OffloadMetadata
 } from "./state";
 
@@ -573,7 +575,21 @@ async function filterLocalIndex(options: FilterOptions): Promise<Array<{
 
 async function cmdFilterLocal(options: FilterOptions) {
   try {
+    // Auto-initialize project if in a git directory
+    if (!options.global && isProjectDirectory()) {
+      await getOrCreateProject();
+    }
+
     const results = await filterLocalIndex(options);
+
+    // Check if we should suggest --global
+    let hint: string | undefined;
+    if (results.length === 0 && !options.global) {
+      const index = await loadLocalIndex();
+      if (index.entries.length > 0) {
+        hint = `No results for current project. Use --global to search all ${index.entries.length} indexed entries.`;
+      }
+    }
 
     return {
       action: "filter-local",
@@ -587,6 +603,7 @@ async function cmdFilterLocal(options: FilterOptions) {
         global: options.global || false
       },
       count: results.length,
+      hint,
       results: results.map(r => ({
         id: r.id,
         summary: r.summary.slice(0, 500) + (r.summary.length > 500 ? "..." : ""),

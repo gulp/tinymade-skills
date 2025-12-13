@@ -194,6 +194,14 @@ export function hashContent(content: string): string {
   return createHash("sha256").update(content).digest("hex").slice(0, 16);
 }
 
+/**
+ * Check if current directory is a valid project directory (has .git)
+ */
+export function isProjectDirectory(): boolean {
+  const cwd = process.cwd();
+  return existsSync(join(cwd, ".git"));
+}
+
 export async function getProjectHash(): Promise<string> {
   const cwd = process.cwd();
   try {
@@ -202,6 +210,21 @@ export async function getProjectHash(): Promise<string> {
   } catch {
     return hashContent(cwd);
   }
+}
+
+/**
+ * Get project hash and auto-initialize project directory if valid git repo
+ */
+export async function getOrCreateProject(): Promise<{ hash: string; initialized: boolean } | null> {
+  if (!isProjectDirectory()) {
+    return null;
+  }
+  const hash = await getProjectHash();
+  const projectDir = join(PROJECTS_DIR, hash);
+  const existed = existsSync(projectDir);
+  ensureProjectDir(hash);
+  await updateProjectAccess(hash);
+  return { hash, initialized: !existed };
 }
 
 export async function getProjectPath(): Promise<string> {
