@@ -15,15 +15,46 @@ Delegate context-heavy work to Gemini via CLI with warm sessions for multi-turn 
 │                                                             │
 │  1. User requests research                                  │
 │  2. Claude invokes bundled scripts (Bun - deterministic)    │
-│  3. Scripts return JSON → Claude presents results           │
+│  3. Scripts check cache → call Gemini if miss → store       │
+│  4. Returns SUMMARY to Claude (full response stays on disk) │
 └───────────────────────┬─────────────────────────────────────┘
                         │
-        ┌───────────────┼───────────────┐
-        ▼               ▼               ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ gemini-cli   │ │   Sessions   │ │   mem0.ai    │
-│ (1M context) │ │ (warm state) │ │ (vector DB)  │
-└──────────────┘ └──────────────┘ └──────────────┘
+        ┌───────────────┼───────────────┬───────────────┐
+        ▼               ▼               ▼               ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+│ gemini-cli   │ │   Sessions   │ │   mem0.ai    │ │ File Cache   │
+│ (1M context) │ │ (warm state) │ │ (vector DB)  │ │ (~/.gemini_  │
+└──────────────┘ └──────────────┘ └──────────────┘ │  offloader/) │
+                                                   └──────────────┘
+```
+
+### Cache Flow
+
+```
+query.ts receives request
+        │
+        ▼
+┌─────────────────┐     ┌─────────────────┐
+│ Generate hash   │────▶│ Check cache     │
+│ (prompt+files)  │     │ ~/.gemini_      │
+└─────────────────┘     │ offloader/      │
+                        └────────┬────────┘
+                                 │
+                    ┌────────────┴────────────┐
+                    ▼                         ▼
+              Cache HIT                  Cache MISS
+              (not stale)                (or stale)
+                    │                         │
+                    ▼                         ▼
+           Return summary.md          Call gemini-cli
+           from disk (instant)              │
+                                            ▼
+                                    Store full_response.md
+                                    Generate summary.md
+                                    Index in mem0
+                                            │
+                                            ▼
+                                    Return summary
 ```
 
 ## When to Use
@@ -52,17 +83,39 @@ Output: `{"installed": true, "authenticated": true, "sessions": [...]}`
 
 ### Single Query
 ```bash
-# Basic query with JSON output
+# Basic query with JSON output (cached automatically)
 bun run scripts/query.ts --prompt "Explain WASM for backends"
 
 # With local directory context
 bun run scripts/query.ts --prompt "Analyze architecture" --include-dirs ./src,./docs
 
-# Save response to file
+# Skip cache (force fresh query)
+bun run scripts/query.ts --prompt "Latest news on X" --no-cache
+
+# Save full response to file (summary still returned)
 bun run scripts/query.ts --prompt "Research topic X" --output research.md
 
 # Pipe content for summarization
 cat large-doc.md | bun run scripts/query.ts --prompt "Summarize key points"
+```
+
+**Cache Behavior:**
+- Queries are cached by hash of prompt + included files + model
+- Returns **summary** (not full response) to keep Claude's context clean
+- Full response stored at `~/.gemini_offloader/.../full_response.md`
+- Cache invalidates when source files change (mtime-based staleness)
+- Automatically indexed in mem0 for semantic search
+
+Output includes cache status:
+```json
+{
+  "success": true,
+  "response": "Summary of the response...",
+  "model": "gemini-2.5-pro",
+  "cached": true,
+  "full_response_path": "~/.gemini_offloader/projects/.../full_response.md",
+  "error": null
+}
 ```
 
 ### Warm Sessions (Multi-turn Research)
@@ -98,12 +151,88 @@ bun run scripts/memory.ts add --user "research" --topic "wasm" \
 # Search past research
 bun run scripts/memory.ts search --user "research" --query "WASM performance"
 
+# Search local index (works without mem0)
+bun run scripts/memory.ts search-local --query "WASM performance"
+
 # Store gemini response directly
 bun run scripts/query.ts -p "Research X" | bun run scripts/memory.ts store-response \
   --user "research" --topic "topic-x"
 
 # Get all memories on a topic
 bun run scripts/memory.ts get --user "research"
+```
+
+### State Persistence
+
+The skill maintains a persistent cache at `~/.gemini_offloader/` with automatic indexing.
+
+#### Initialize State Directory
+```bash
+# Scaffold directory structure (auto-creates on first use)
+bun run scripts/init.ts
+
+# Check current state
+bun run scripts/init.ts --status
+
+# Repair/validate installation
+bun run scripts/init.ts --repair
+
+# Reset config to defaults (keeps cached data)
+bun run scripts/init.ts --reset
+```
+
+Output:
+```json
+{
+  "success": true,
+  "action": "status",
+  "paths": {
+    "base_dir": "~/.gemini_offloader",
+    "config_file": "~/.gemini_offloader/config.json",
+    "projects_dir": "~/.gemini_offloader/projects"
+  },
+  "stats": {
+    "project_count": 3,
+    "total_cache_entries": 47,
+    "total_sessions": 5,
+    "index_entries": 52
+  }
+}
+```
+
+#### Sync Operations
+```bash
+# Show sync statistics
+bun run scripts/sync.ts stats
+
+# Check drift between filesystem and mem0 index
+bun run scripts/sync.ts check
+
+# Re-index all cached responses into mem0
+bun run scripts/sync.ts rebuild
+
+# Remove orphaned entries from index
+bun run scripts/sync.ts prune
+```
+
+#### Directory Structure
+```
+~/.gemini_offloader/
+├── config.json                    # Global settings
+├── index.json                     # Local fallback index (when mem0 unavailable)
+└── projects/
+    └── {project_hash}/
+        ├── project.json           # Project metadata
+        ├── cache/                 # One-shot query cache
+        │   └── {source_hash}/
+        │       ├── metadata.json  # Query metadata, file mtimes
+        │       ├── full_response.md
+        │       └── summary.md     # What gets returned to Claude
+        └── sessions/              # Multi-turn session persistence
+            └── {session_name}/
+                ├── session.json
+                ├── full_response-{timestamp}.md
+                └── summary.md     # Cumulative session summary
 ```
 
 ## Workflows

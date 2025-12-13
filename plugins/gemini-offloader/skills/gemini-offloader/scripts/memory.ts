@@ -3,6 +3,8 @@
  * mem0.ai integration for persistent memory across gemini sessions.
  * Stores research findings, summaries, and key insights in vector store.
  *
+ * Enhanced with full OffloadMetadata schema and local index fallback.
+ *
  * Prerequisites:
  *   bun add mem0ai
  *
@@ -12,6 +14,7 @@
  *   bun run scripts/memory.ts search --user "research" --query "WASM performance"
  *   bun run scripts/memory.ts get --user "research"
  *   bun run scripts/memory.ts delete --id "memory_id"
+ *   bun run scripts/memory.ts index-offload --summary "..." --metadata '{...}'
  *   echo '{"response":"..."}' | bun run scripts/memory.ts store-response --user "research" --topic "wasm"
  *
  * Output JSON:
@@ -26,6 +29,11 @@
 import { existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
+import {
+  appendToLocalIndex,
+  loadLocalIndex,
+  type OffloadMetadata
+} from "./state";
 
 // Dynamic import for mem0 (may not be installed)
 let Memory: any = null;
@@ -205,6 +213,112 @@ async function cmdDelete(args: { id: string }) {
   }
 }
 
+/**
+ * Index an offload result with full OffloadMetadata schema.
+ * Falls back to local index if mem0 is unavailable.
+ * This is the primary function used by query.ts and session.ts.
+ */
+export async function indexOffload(
+  summary: string,
+  metadata: OffloadMetadata
+): Promise<{ success: boolean; mem0_indexed: boolean; local_indexed: boolean; error: string | null }> {
+  let mem0Indexed = false;
+  let localIndexed = false;
+  let error: string | null = null;
+
+  // Try mem0 first
+  const { memory, error: mem0Error } = await getMemory();
+  if (memory && !mem0Error) {
+    try {
+      await memory.add(summary, {
+        user_id: "offloads",
+        metadata: metadata as Record<string, unknown>
+      });
+      mem0Indexed = true;
+    } catch (e) {
+      error = `mem0 indexing failed: ${e}`;
+    }
+  }
+
+  // Always update local index as backup
+  try {
+    await appendToLocalIndex(summary, metadata);
+    localIndexed = true;
+  } catch (e) {
+    if (!error) {
+      error = `Local indexing failed: ${e}`;
+    } else {
+      error += `; Local indexing also failed: ${e}`;
+    }
+  }
+
+  return {
+    success: mem0Indexed || localIndexed,
+    mem0_indexed: mem0Indexed,
+    local_indexed: localIndexed,
+    error: (mem0Indexed || localIndexed) ? null : error
+  };
+}
+
+async function cmdIndexOffload(args: { summary: string; metadata: string }) {
+  try {
+    const metadata: OffloadMetadata = JSON.parse(args.metadata);
+    const result = await indexOffload(args.summary, metadata);
+
+    return {
+      action: "index-offload",
+      ...result
+    };
+  } catch (e) {
+    return {
+      action: "index-offload",
+      success: false,
+      mem0_indexed: false,
+      local_indexed: false,
+      error: `Failed to parse metadata: ${e}`
+    };
+  }
+}
+
+/**
+ * Search local index when mem0 is unavailable.
+ */
+async function searchLocalIndex(query: string, limit: number = 5): Promise<Array<{
+  id: string;
+  summary: string;
+  metadata: OffloadMetadata;
+  score: number;
+}>> {
+  const index = await loadLocalIndex();
+  const queryLower = query.toLowerCase();
+  const queryTerms = queryLower.split(/\s+/).filter(t => t.length > 2);
+
+  // Simple keyword matching with scoring
+  const scored = index.entries.map(entry => {
+    const summaryLower = entry.summary.toLowerCase();
+    let score = 0;
+
+    for (const term of queryTerms) {
+      if (summaryLower.includes(term)) {
+        score += 1;
+      }
+    }
+
+    // Boost recent entries
+    const age = Date.now() - new Date(entry.metadata.timestamp).getTime();
+    const daysSinceCreated = age / (1000 * 60 * 60 * 24);
+    if (daysSinceCreated < 7) score += 0.5;
+    if (daysSinceCreated < 1) score += 0.5;
+
+    return { ...entry, score };
+  });
+
+  return scored
+    .filter(e => e.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+}
+
 async function cmdStoreResponse(args: { user: string; topic: string; file?: string }) {
   const { memory, error } = await getMemory();
   if (error) {
@@ -285,6 +399,7 @@ async function main() {
       else if (args[i] === "--limit" || args[i] === "-l") opts.limit = parseInt(args[++i]);
       else if (args[i] === "--id") opts.id = args[++i];
       else if (args[i] === "--file" || args[i] === "-f") opts.file = args[++i];
+      else if (args[i] === "--summary" || args[i] === "-s") opts.summary = args[++i];
     }
     return opts;
   };
@@ -342,6 +457,33 @@ async function main() {
           topic: opts.topic as string,
           file: opts.file as string | undefined
         });
+      }
+      break;
+    case "index-offload":
+      if (!opts.summary || !opts.metadata) {
+        result = { success: false, error: "index-offload requires --summary and --metadata" };
+      } else {
+        result = await cmdIndexOffload({
+          summary: opts.summary as string,
+          metadata: opts.metadata as string
+        });
+      }
+      break;
+    case "search-local":
+      if (!opts.query) {
+        result = { success: false, error: "search-local requires --query" };
+      } else {
+        const localResults = await searchLocalIndex(
+          opts.query as string,
+          (opts.limit as number) || 5
+        );
+        result = {
+          action: "search-local",
+          success: true,
+          query: opts.query,
+          count: localResults.length,
+          results: localResults
+        };
       }
       break;
     default:
