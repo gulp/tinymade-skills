@@ -78,6 +78,50 @@ async function readStdin(): Promise<string | null> {
   return content || null;
 }
 
+/**
+ * Extract readable error message from Gemini CLI output.
+ * The CLI writes detailed errors to /tmp/gemini-client-error-*.json
+ * and outputs "[object Object]" as the message (a CLI bug).
+ * This function reads the actual error from the report file.
+ */
+async function extractGeminiError(stderr: string): Promise<string> {
+  // Try to extract the error report file path from stderr
+  const reportMatch = stderr.match(/Full report available at:\s*(\S+\.json)/);
+
+  if (reportMatch) {
+    const reportPath = reportMatch[1];
+    try {
+      const reportContent = await Bun.file(reportPath).text();
+      const report = JSON.parse(reportContent);
+
+      // Extract the actual error message from the report
+      if (report.error?.message && typeof report.error.message === "string") {
+        return report.error.message;
+      }
+
+      // Fallback: stringify the error object properly
+      if (report.error) {
+        return JSON.stringify(report.error, null, 2);
+      }
+    } catch {
+      // Failed to read/parse report, fall through to stderr
+    }
+  }
+
+  // If stderr contains "[object Object]", that's unhelpful - provide context
+  if (stderr.includes("[object Object]")) {
+    const cleanStderr = stderr
+      .split("\n")
+      .filter(line => !line.includes("[STARTUP]") && !line.includes("Loaded cached credentials"))
+      .join("\n")
+      .trim();
+
+    return cleanStderr || "Gemini API error (check /tmp/gemini-client-error-*.json for details)";
+  }
+
+  return stderr.trim();
+}
+
 async function runQuery(args: {
   prompt: string;
   model?: string;
@@ -283,7 +327,7 @@ async function runQuery(args: {
       success: false,
       response: null,
       model: null,
-      error: stderr.trim() || `Command failed with exit code ${exitCode}`
+      error: await extractGeminiError(stderr) || `Command failed with exit code ${exitCode}`
     };
   } catch (e) {
     return {
