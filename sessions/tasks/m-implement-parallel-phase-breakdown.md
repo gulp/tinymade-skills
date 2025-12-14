@@ -1,7 +1,7 @@
 ---
 name: m-implement-parallel-phase-breakdown
 branch: feature/parallel-phase-breakdown
-status: pending
+status: in-progress
 created: 2025-12-14
 ---
 
@@ -19,33 +19,33 @@ This extends the task-breakdown skill to support the phased breakdown model from
 ## Success Criteria
 
 ### Spec-First Artifacts
-- [ ] Breakdown generates `data-model.md` with shared entity schemas/types
-- [ ] Breakdown generates `contracts/` directory with API interface definitions
-- [ ] Breakdown generates `quickstart.md` with runtime testing guidance
+- [x] Breakdown generates `data-model.md` with shared entity schemas/types
+- [x] Breakdown generates `contracts/` directory with API interface definitions
+- [x] Breakdown generates `quickstart.md` with runtime testing guidance
 
 ### Parallel Task Identification
-- [ ] Parallel-safe subtasks marked with `[P]` after numeric prefix (e.g., `01-[P]auth-service.md`)
-- [ ] Sequential/blocking tasks unmarked (e.g., `02-shared-types.md`)
-- [ ] Dependency graph shows which tasks block others
+- [x] Parallel-safe subtasks marked with `[P]` after numeric prefix (e.g., `01-[P]auth-service.md`)
+- [x] Sequential/blocking tasks unmarked (e.g., `02-shared-types.md`)
+- [x] Dependency graph shows which tasks block others
 
 ### Dependency Visualization
-- [ ] Generate dependency matrix (text table showing task → depends_on relationships)
-- [ ] Generate MermaidJS diagram for visual dependency graph
-- [ ] Either embedded in task-breakdown or complementary skill
+- [x] Generate dependency matrix (text table showing task → depends_on relationships)
+- [x] Generate MermaidJS diagram for visual dependency graph
+- [x] Either embedded in task-breakdown or complementary skill
 
 ### Decomposition Engine (Deterministic)
-- [ ] Script estimates t-shirt size from criteria count, file scope, integration points
-- [ ] Script applies decomposition principles (API-first, domain-first, infrastructure-first)
-- [ ] Script identifies contract boundaries for parallelization
+- [x] Script estimates t-shirt size from criteria count, file scope, integration points
+- [x] Script applies decomposition principles (API-first, domain-first, infrastructure-first)
+- [x] Script identifies contract boundaries for parallelization
 
 ### SKILL.md Guidance
-- [ ] When-to-use heuristics for each decomposition principle
-- [ ] Examples of data-model and contract generation
-- [ ] Decision matrix: t-shirt size → breakdown granularity
+- [x] When-to-use heuristics for each decomposition principle
+- [x] Examples of data-model and contract generation
+- [x] Decision matrix: t-shirt size → breakdown granularity
 
 ### Integration
-- [ ] Extends existing task-breakdown skill (not replace)
-- [ ] Output compatible with worktree-orchestrator
+- [x] Extends existing task-breakdown skill (not replace)
+- [x] Output compatible with worktree-orchestrator
 
 ## Context Manifest
 
