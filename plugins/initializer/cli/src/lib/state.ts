@@ -121,3 +121,31 @@ export function parseTestStatus(statusStr: string): TestStatus | null {
   if (normalized === 'unknown') return 'unknown';
   return null;
 }
+
+
+/**
+ * Clean up orphaned temp files from the state directory
+ * This handles cases where processes crash before finishing atomic writes
+ */
+export function cleanupTempFiles(stateDir: string): number {
+  if (!existsSync(stateDir)) {
+    return 0;
+  }
+
+  let cleaned = 0;
+  const files = readdirSync(stateDir);
+
+  for (const file of files) {
+    if (file.includes('.tmp.')) {
+      try {
+        const filePath = `${stateDir}/${file}`;
+        unlinkSync(filePath);
+        cleaned++;
+      } catch {
+        // Ignore cleanup errors for individual files
+      }
+    }
+  }
+
+  return cleaned;
+}
