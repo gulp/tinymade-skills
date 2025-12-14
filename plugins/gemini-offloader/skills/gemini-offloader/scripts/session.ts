@@ -17,8 +17,9 @@
  *   bun run scripts/session.ts delete --index 3
  *
  * Options:
- *   --timeout, -t   Request timeout in seconds (default: 90)
- *                   Useful for complex research queries or large context operations
+ *   --timeout, -t   Request timeout in seconds (default: 1800)
+ *                   For timely tasks, use --timeout 60 or --timeout 120
+ *                   For deep research, default 1800s (30min) supports warm 1M token window
  *
  * Output JSON:
  *   {
@@ -288,7 +289,7 @@ async function runWithSession(
   geminiPath: string,
   prompt: string,
   resume?: string | number,
-  timeoutMs: number = 90000
+  timeoutMs: number = 1800000
 ): Promise<GeminiResult> {
   const cmdArgs: string[] = [geminiPath];
 
@@ -676,7 +677,7 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
     }
   }
 
-  const timeoutMs = args.timeout ? args.timeout * 1000 : 90000;
+  const timeoutMs = args.timeout ? args.timeout * 1000 : 1800000;
   const { response, error, exitCode, diagnostic } = await runWithSession(geminiPath, args.prompt, resume, timeoutMs);
 
   if (error) {
@@ -735,7 +736,7 @@ async function cmdCreate(args: { name: string; prompt: string; timeout?: number 
   }
 
   // Run initial query (creates new session)
-  const timeoutMs = args.timeout ? args.timeout * 1000 : 90000;
+  const timeoutMs = args.timeout ? args.timeout * 1000 : 1800000;
   const { response, error, exitCode, diagnostic } = await runWithSession(geminiPath, args.prompt, undefined, timeoutMs);
 
   if (error) {
