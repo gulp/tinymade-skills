@@ -4,6 +4,7 @@ sessions/package.json
 sessions/transcripts/
 sessions/.archived/
 .trees/
+
 # Para directories and state files
 # Ignore everything in .para except Dockerfile.custom and config.json
 .para/*
@@ -15,8 +16,44 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Node.js
+node_modules/
+package-lock.json
+yarn.lock
+bun.lock
+npm-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+
+# IDE and Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+.emacs.d/
+.vim/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+coverage/
+
+# Runtime files
+*.pid
+*.seed
+*.seed.*
+
 # Local environment
 .envrc
+.env.local
+.env.*.local
 
 # Serena cache
 .serena/
