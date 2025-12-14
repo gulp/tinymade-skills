@@ -330,10 +330,13 @@ const AGENT_ID = "gemini-offloader";
  * Falls back to local index if mem0 is unavailable.
  * This is the primary function used by query.ts and session.ts.
  *
- * Entity scoping (mem0 best practices):
- * - agent_id: "gemini-offloader" - Agent's accumulated knowledge (cross-project)
- * - user_id: project_hash - Project-specific context
- * - run_id: session_name - Short-lived session context (if applicable)
+ * Entity scoping (mem0 constraint: ONE entity space per memory):
+ * - Project memories: user_id=project_hash only
+ * - Session memories: user_id=project_hash + run_id=session_name
+ *
+ * Note: mem0 queries ONE entity space at a time. Combining agent_id + user_id
+ * creates memories that are unretrievable. Each memory must belong to exactly
+ * one entity type for reliable querying.
  */
 export async function indexOffload(
   summary: string,
@@ -351,17 +354,16 @@ export async function indexOffload(
         // Hosted API: expects Array<Message>, uses snake_case
         const messages = [{ role: "user" as const, content: summary }];
 
-        // Entity-scoped memory model:
-        // - agent_id: Agent's learned knowledge (cross-project)
-        // - user_id: Project-specific context (using project_hash)
-        // - run_id: Session-scoped context (short-term, if in session mode)
+        // Single entity space model (mem0 requirement):
+        // - user_id only for project scope (queryable via user_id)
+        // - user_id + run_id for session scope (queryable via user_id + run_id)
+        // Do NOT combine agent_id + user_id - creates unretrievable memories
         const entityScope: Record<string, unknown> = {
-          agent_id: AGENT_ID,
           user_id: metadata.project_hash,
           metadata: metadata as Record<string, unknown>
         };
 
-        // Add run_id for session-scoped memories (short-term)
+        // Add run_id for session-scoped memories
         if (metadata.session_name) {
           entityScope.run_id = metadata.session_name;
         }
@@ -370,7 +372,6 @@ export async function indexOffload(
       } else {
         // OSS API: uses camelCase
         const entityScope: Record<string, unknown> = {
-          agentId: AGENT_ID,
           userId: metadata.project_hash,
           metadata: metadata as Record<string, unknown>
         };
@@ -449,23 +450,23 @@ export async function searchScoped(options: ScopedSearchOptions): Promise<{
   }
 
   try {
-    let filters: Record<string, unknown>;
-
     if (mode === "hosted") {
       // Build search options based on scope
-      // mem0 hosted API uses direct entity params, not nested filters for search
+      // mem0 constraint: query ONE entity space at a time
       const searchOpts: Record<string, unknown> = {
-        limit: options.limit || 10,
-        agent_id: AGENT_ID
+        limit: options.limit || 10
       };
 
       switch (options.scope) {
         case "agent":
-          // Agent knowledge only - cross-project (just agent_id)
+          // Agent scope uses AGENT_ID as user_id (workaround for cross-project)
+          // Since mem0 doesn't support agent_id-only queries reliably,
+          // we use a dedicated user_id for agent-level memories
+          searchOpts.user_id = AGENT_ID;
           break;
 
         case "project":
-          // Agent + project scope
+          // Project scope: user_id only
           if (!options.projectHash) {
             return { success: false, scope: options.scope, results: [], error: "projectHash required for project scope" };
           }
@@ -473,7 +474,7 @@ export async function searchScoped(options: ScopedSearchOptions): Promise<{
           break;
 
         case "session":
-          // Agent + project + session scope (most specific)
+          // Session scope: user_id + run_id
           if (!options.projectHash || !options.sessionName) {
             return { success: false, scope: options.scope, results: [], error: "projectHash and sessionName required for session scope" };
           }
@@ -491,13 +492,14 @@ export async function searchScoped(options: ScopedSearchOptions): Promise<{
         error: null
       };
     } else {
-      // OSS mode - simpler filtering via options
+      // OSS mode - single entity space per query
       const searchOpts: Record<string, unknown> = {
-        agentId: AGENT_ID,
         limit: options.limit || 10
       };
 
-      if (options.scope !== "agent" && options.projectHash) {
+      if (options.scope === "agent") {
+        searchOpts.userId = AGENT_ID;
+      } else if (options.projectHash) {
         searchOpts.userId = options.projectHash;
       }
 
@@ -543,24 +545,41 @@ export async function getAllScoped(options: {
     let getOpts: Record<string, unknown>;
 
     if (mode === "hosted") {
-      getOpts = { agent_id: AGENT_ID };
+      // mem0 constraint: query ONE entity space at a time
+      getOpts = {};
 
-      if (options.scope !== "agent" && options.projectHash) {
-        getOpts.user_id = options.projectHash;
-      }
-
-      if (options.scope === "session" && options.sessionName) {
-        getOpts.run_id = options.sessionName;
+      switch (options.scope) {
+        case "agent":
+          // Agent scope uses AGENT_ID as user_id (workaround)
+          getOpts.user_id = AGENT_ID;
+          break;
+        case "project":
+          getOpts.user_id = options.projectHash;
+          break;
+        case "session":
+          getOpts.user_id = options.projectHash;
+          if (options.sessionName) {
+            getOpts.run_id = options.sessionName;
+          }
+          break;
       }
     } else {
-      getOpts = { agentId: AGENT_ID };
+      // OSS mode - single entity space per query
+      getOpts = {};
 
-      if (options.scope !== "agent" && options.projectHash) {
-        getOpts.userId = options.projectHash;
-      }
-
-      if (options.scope === "session" && options.sessionName) {
-        getOpts.runId = options.sessionName;
+      switch (options.scope) {
+        case "agent":
+          getOpts.userId = AGENT_ID;
+          break;
+        case "project":
+          getOpts.userId = options.projectHash;
+          break;
+        case "session":
+          getOpts.userId = options.projectHash;
+          if (options.sessionName) {
+            getOpts.runId = options.sessionName;
+          }
+          break;
       }
     }
 
