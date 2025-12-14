@@ -3,7 +3,13 @@
  * mem0.ai integration for persistent memory across gemini sessions.
  * Stores research findings, summaries, and key insights in vector store.
  *
- * Enhanced with full OffloadMetadata schema and local index fallback.
+ * Enhanced with full OffloadMetadata schema, local index fallback,
+ * and entity-scoped memory model (agent_id, user_id, run_id).
+ *
+ * Entity Model (mem0 best practices):
+ *   - agent_id: "gemini-offloader" - Agent's accumulated knowledge (cross-project)
+ *   - user_id: project_hash - Project-specific context
+ *   - run_id: session_name - Short-lived session context (if applicable)
  *
  * Prerequisites:
  *   bun add mem0ai
@@ -16,6 +22,14 @@
  *   bun run scripts/memory.ts delete --id "memory_id"
  *   bun run scripts/memory.ts index-offload --summary "..." --metadata '{...}'
  *   echo '{"response":"..."}' | bun run scripts/memory.ts store-response --user "research" --topic "wasm"
+ *
+ *   # Entity-scoped search (new model):
+ *   bun run scripts/memory.ts search-scoped --scope agent --query "patterns"           # Cross-project agent knowledge
+ *   bun run scripts/memory.ts search-scoped --scope project --project "abc123" --query "conventions"  # Project-specific
+ *   bun run scripts/memory.ts search-scoped --scope session --project "abc123" --session "research-1" --query "current"  # Session-specific
+ *   bun run scripts/memory.ts get-scoped --scope agent                                 # All agent memories
+ *   bun run scripts/memory.ts get-scoped --scope project --project "abc123"            # All project memories
+ *   bun run scripts/memory.ts migrate-legacy                                           # Analyze legacy user_id="offloads" memories
  *
  *   # Filter local index with various criteria:
  *   bun run scripts/memory.ts filter-local --since 7d                    # Last 7 days
@@ -308,10 +322,18 @@ async function cmdDelete(args: { id: string }) {
   }
 }
 
+// Entity constants for mem0 scoping
+const AGENT_ID = "gemini-offloader";
+
 /**
  * Index an offload result with full OffloadMetadata schema.
  * Falls back to local index if mem0 is unavailable.
  * This is the primary function used by query.ts and session.ts.
+ *
+ * Entity scoping (mem0 best practices):
+ * - agent_id: "gemini-offloader" - Agent's accumulated knowledge (cross-project)
+ * - user_id: project_hash - Project-specific context
+ * - run_id: session_name - Short-lived session context (if applicable)
  */
 export async function indexOffload(
   summary: string,
@@ -326,18 +348,38 @@ export async function indexOffload(
   if (memory && !mem0Error) {
     try {
       if (mode === "hosted") {
-        // Hosted API: expects Array<Message>, uses user_id (snake_case)
+        // Hosted API: expects Array<Message>, uses snake_case
         const messages = [{ role: "user" as const, content: summary }];
-        await memory.add(messages, {
-          user_id: "offloads",
+
+        // Entity-scoped memory model:
+        // - agent_id: Agent's learned knowledge (cross-project)
+        // - user_id: Project-specific context (using project_hash)
+        // - run_id: Session-scoped context (short-term, if in session mode)
+        const entityScope: Record<string, unknown> = {
+          agent_id: AGENT_ID,
+          user_id: metadata.project_hash,
           metadata: metadata as Record<string, unknown>
-        });
+        };
+
+        // Add run_id for session-scoped memories (short-term)
+        if (metadata.session_name) {
+          entityScope.run_id = metadata.session_name;
+        }
+
+        await memory.add(messages, entityScope);
       } else {
-        // OSS API: accepts string, uses userId (camelCase)
-        await memory.add(summary, {
-          userId: "offloads",
+        // OSS API: uses camelCase
+        const entityScope: Record<string, unknown> = {
+          agentId: AGENT_ID,
+          userId: metadata.project_hash,
           metadata: metadata as Record<string, unknown>
-        });
+        };
+
+        if (metadata.session_name) {
+          entityScope.runId = metadata.session_name;
+        }
+
+        await memory.add(summary, entityScope);
       }
       mem0Indexed = true;
     } catch (e) {
@@ -363,6 +405,178 @@ export async function indexOffload(
     local_indexed: localIndexed,
     error: (mem0Indexed || localIndexed) ? null : error
   };
+}
+
+/**
+ * Search scopes for entity-based memory retrieval.
+ * Follows mem0 best practices for layered memory access.
+ */
+export type SearchScope = "agent" | "project" | "session";
+
+export interface ScopedSearchOptions {
+  query: string;
+  scope: SearchScope;
+  projectHash?: string;
+  sessionName?: string;
+  limit?: number;
+}
+
+/**
+ * Search memories with entity scoping.
+ *
+ * Scopes:
+ * - "agent": Cross-project agent knowledge (agent_id only)
+ * - "project": Project-specific context (agent_id + user_id)
+ * - "session": Current session context (agent_id + user_id + run_id)
+ */
+export async function searchScoped(options: ScopedSearchOptions): Promise<{
+  success: boolean;
+  scope: SearchScope;
+  results: unknown[];
+  error: string | null;
+}> {
+  const { memory, error: mem0Error, mode } = await getMemory();
+
+  if (mem0Error || !memory) {
+    // Fall back to local index search
+    const localResults = await searchLocalIndex(options.query, options.limit || 5);
+    return {
+      success: true,
+      scope: options.scope,
+      results: localResults,
+      error: mem0Error ? `mem0 unavailable, used local index: ${mem0Error}` : null
+    };
+  }
+
+  try {
+    let filters: Record<string, unknown>;
+
+    if (mode === "hosted") {
+      // Build search options based on scope
+      // mem0 hosted API uses direct entity params, not nested filters for search
+      const searchOpts: Record<string, unknown> = {
+        limit: options.limit || 10,
+        agent_id: AGENT_ID
+      };
+
+      switch (options.scope) {
+        case "agent":
+          // Agent knowledge only - cross-project (just agent_id)
+          break;
+
+        case "project":
+          // Agent + project scope
+          if (!options.projectHash) {
+            return { success: false, scope: options.scope, results: [], error: "projectHash required for project scope" };
+          }
+          searchOpts.user_id = options.projectHash;
+          break;
+
+        case "session":
+          // Agent + project + session scope (most specific)
+          if (!options.projectHash || !options.sessionName) {
+            return { success: false, scope: options.scope, results: [], error: "projectHash and sessionName required for session scope" };
+          }
+          searchOpts.user_id = options.projectHash;
+          searchOpts.run_id = options.sessionName;
+          break;
+      }
+
+      const results = await memory.search(options.query, searchOpts);
+
+      return {
+        success: true,
+        scope: options.scope,
+        results: results?.results || results || [],
+        error: null
+      };
+    } else {
+      // OSS mode - simpler filtering via options
+      const searchOpts: Record<string, unknown> = {
+        agentId: AGENT_ID,
+        limit: options.limit || 10
+      };
+
+      if (options.scope !== "agent" && options.projectHash) {
+        searchOpts.userId = options.projectHash;
+      }
+
+      if (options.scope === "session" && options.sessionName) {
+        searchOpts.runId = options.sessionName;
+      }
+
+      const results = await memory.search(options.query, searchOpts);
+
+      return {
+        success: true,
+        scope: options.scope,
+        results: results?.results || results || [],
+        error: null
+      };
+    }
+  } catch (e) {
+    return { success: false, scope: options.scope, results: [], error: String(e) };
+  }
+}
+
+/**
+ * Get all memories for a given scope.
+ */
+export async function getAllScoped(options: {
+  scope: SearchScope;
+  projectHash?: string;
+  sessionName?: string;
+}): Promise<{
+  success: boolean;
+  scope: SearchScope;
+  count: number;
+  memories: unknown[];
+  error: string | null;
+}> {
+  const { memory, error: mem0Error, mode } = await getMemory();
+
+  if (mem0Error || !memory) {
+    return { success: false, scope: options.scope, count: 0, memories: [], error: mem0Error || "mem0 not available" };
+  }
+
+  try {
+    let getOpts: Record<string, unknown>;
+
+    if (mode === "hosted") {
+      getOpts = { agent_id: AGENT_ID };
+
+      if (options.scope !== "agent" && options.projectHash) {
+        getOpts.user_id = options.projectHash;
+      }
+
+      if (options.scope === "session" && options.sessionName) {
+        getOpts.run_id = options.sessionName;
+      }
+    } else {
+      getOpts = { agentId: AGENT_ID };
+
+      if (options.scope !== "agent" && options.projectHash) {
+        getOpts.userId = options.projectHash;
+      }
+
+      if (options.scope === "session" && options.sessionName) {
+        getOpts.runId = options.sessionName;
+      }
+    }
+
+    const results = await memory.getAll(getOpts);
+    const memories = Array.isArray(results) ? results : results?.results || [];
+
+    return {
+      success: true,
+      scope: options.scope,
+      count: memories.length,
+      memories,
+      error: null
+    };
+  } catch (e) {
+    return { success: false, scope: options.scope, count: 0, memories: [], error: String(e) };
+  }
 }
 
 async function cmdIndexOffload(args: { summary: string; metadata: string }) {
@@ -687,7 +901,7 @@ async function main() {
   if (!command) {
     console.log(JSON.stringify({
       success: false,
-      error: "Usage: memory.ts <status|add|search|get|delete|store-response|search-local|filter-local> [options]"
+      error: "Usage: memory.ts <status|add|search|get|delete|store-response|search-local|filter-local|search-scoped|get-scoped|migrate-legacy> [options]"
     }, null, 2));
     process.exit(1);
   }
@@ -710,6 +924,9 @@ async function main() {
       else if (args[i] === "--source") opts.source = args[++i];
       else if (args[i] === "--session") opts.session = args[++i];
       else if (args[i] === "--global" || args[i] === "-g") opts.global = true;
+      // Scoped search options
+      else if (args[i] === "--scope") opts.scope = args[++i];
+      else if (args[i] === "--project" || args[i] === "-p") opts.project = args[++i];
     }
     return opts;
   };
@@ -808,6 +1025,98 @@ async function main() {
         limit: opts.limit as number | undefined
       });
       break;
+
+    case "search-scoped": {
+      // Entity-scoped search: --scope (agent|project|session) --query --project --session --limit
+      const scope = (opts.scope as string) || "agent";
+      if (!["agent", "project", "session"].includes(scope)) {
+        result = { success: false, error: "scope must be one of: agent, project, session" };
+      } else if (!opts.query) {
+        result = { success: false, error: "search-scoped requires --query" };
+      } else {
+        result = await searchScoped({
+          query: opts.query as string,
+          scope: scope as SearchScope,
+          projectHash: opts.project as string | undefined,
+          sessionName: opts.session as string | undefined,
+          limit: opts.limit as number | undefined
+        });
+        result.action = "search-scoped";
+      }
+      break;
+    }
+
+    case "get-scoped": {
+      // Entity-scoped get all: --scope (agent|project|session) --project --session
+      const scope = (opts.scope as string) || "agent";
+      if (!["agent", "project", "session"].includes(scope)) {
+        result = { success: false, error: "scope must be one of: agent, project, session" };
+      } else {
+        result = await getAllScoped({
+          scope: scope as SearchScope,
+          projectHash: opts.project as string | undefined,
+          sessionName: opts.session as string | undefined
+        });
+        result.action = "get-scoped";
+      }
+      break;
+    }
+
+    case "migrate-legacy": {
+      // Migrate old user_id="offloads" memories to new entity model
+      // This is a read-only analysis - actual migration would require delete + re-add
+      const { memory, error: mem0Error, mode } = await getMemory();
+      if (mem0Error || !memory) {
+        result = { action: "migrate-legacy", success: false, error: mem0Error || "mem0 not available" };
+      } else {
+        try {
+          // Get all legacy memories
+          let legacyMemories;
+          if (mode === "hosted") {
+            legacyMemories = await memory.getAll({ user_id: "offloads" });
+          } else {
+            legacyMemories = await memory.getAll({ userId: "offloads" });
+          }
+
+          const memories = Array.isArray(legacyMemories) ? legacyMemories : legacyMemories?.results || [];
+
+          // Analyze what would be migrated
+          const analysis = {
+            total_legacy_memories: memories.length,
+            by_project: {} as Record<string, number>,
+            by_session: {} as Record<string, number>,
+            missing_project_hash: 0
+          };
+
+          for (const mem of memories) {
+            const projectHash = mem.metadata?.project_hash;
+            const sessionName = mem.metadata?.session_name;
+
+            if (projectHash) {
+              analysis.by_project[projectHash] = (analysis.by_project[projectHash] || 0) + 1;
+            } else {
+              analysis.missing_project_hash++;
+            }
+
+            if (sessionName) {
+              analysis.by_session[sessionName] = (analysis.by_session[sessionName] || 0) + 1;
+            }
+          }
+
+          result = {
+            action: "migrate-legacy",
+            success: true,
+            message: "Analysis complete. Legacy memories found under user_id='offloads'. New memories will use agent_id + user_id (project_hash) + run_id (session_name).",
+            analysis,
+            note: "To actually migrate, you would need to re-index each memory with the new entity model. The metadata already contains project_hash and session_name."
+          };
+        } catch (e) {
+          result = { action: "migrate-legacy", success: false, error: String(e) };
+        }
+      }
+      break;
+    }
+
     default:
       result = { success: false, error: `Unknown command: ${command}` };
   }
