@@ -1,0 +1,8 @@
+{
+  "name": "task-breakdown",
+  "description": "Systematic task decomposition into cc-sessions directory structure with subtasks and index management",
+  "version": "1.0.0",
+  "author": { "name": "tinymade" },
+  "keywords": ["task", "breakdown", "subtasks", "decompose", "planning", "cc-sessions"],
+  "skills": ["./skills/"]
+}
