@@ -1,33 +1,36 @@
 ---
 name: h-implement-parallel-agent-system
 branch: feature/parallel-agent-system
-status: pending
+status: in-progress
 created: 2025-12-10
+updated: 2025-12-14
 ---
 
-# Parallel Agent System for cc-sessions
+# Parallel Agent System - `initializer` CLI
 
 ## Problem/Goal
 
-cc-sessions currently lacks infrastructure for orchestrating multiple parallel Claude agents. When using worktree-orchestrator to spawn agents, the orchestrator has no visibility into:
+When using worktree-orchestrator to spawn parallel Claude agents, the orchestrator has no visibility into:
 - What agents are currently working on
 - Whether agents are blocked or need help
 - Test status across all agents
 - Progress through task todos
 
-This task implements a cc-sessions-native parallel agent coordination system inspired by [para](https://github.com/2mawi2/para) and [Anthropic's long-running agent harness patterns](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents).
+This task implements a **standalone** parallel agent coordination system inspired by [para](https://github.com/2mawi2/para) and [Anthropic's long-running agent harness patterns](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents).
+
+**Key Design Change (2025-12-14):** The system is **decoupled from cc-sessions** - uses its own Bun-based CLI (`initializer`) rather than extending the `sessions` command. This allows the coordination system to work independently.
 
 ## Success Criteria
 
 ### Core Functionality
-- [ ] `sessions status "task" --tests X --todos Y/Z` CLI command works from any worktree
-- [ ] Status persists to `.sessions/state/{task}.status.json` with atomic writes
-- [ ] `sessions status show [--json]` displays all agent statuses from orchestrator
-- [ ] `sessions monitor` TUI shows real-time agent status (active/idle/blocked/stale)
+- [ ] `initializer status "task" --tests X --todos Y/Z` CLI command works from any worktree
+- [ ] Status persists to `.trees/.state/{task}.status.json` with atomic writes
+- [ ] `initializer show [--json]` displays all agent statuses from orchestrator
+- [ ] `initializer monitor` TUI shows real-time agent status (active/idle/blocked/stale)
 
 ### Skills
-- [ ] Agent-status skill auto-loaded in spawned agent contexts (worktrees)
-- [ ] Orchestrator-coordination skill provides status reading for main branch context
+- [ ] Agent-status skill provides wrapper scripts + AskUserQuestion prompts for worktree agents
+- [ ] Orchestrator skill provides status reading for main branch context
 - [ ] Skills integrate with existing worktree-orchestrator spawn flow
 
 ### Integration
@@ -36,17 +39,17 @@ This task implements a cc-sessions-native parallel agent coordination system ins
 - [ ] TUI supports intervention actions (resume, cancel, view logs)
 
 ### Quality
-- [ ] Python implementation (consistent with cc-sessions codebase)
-- [ ] TUI uses `textual` or `rich` (Python ecosystem)
-- [ ] Works with existing cc-sessions task file workflow
+- [ ] **Bun runtime** - TypeScript CLI, fast startup
+- [ ] TUI uses appropriate library (ink for Bun/Node or rich for Python fallback)
+- [ ] Fully decoupled from cc-sessions - works independently
 
 ## Subtasks
 
 | Subtask | Description | Status |
 |---------|-------------|--------|
-| `01-status-protocol.md` | CLI (`sessions status`) + JSON persistence layer | pending |
-| `02-agent-status-skill.md` | Skill for spawned agents to report status | pending |
-| `03-sessions-monitor-tui.md` | Human-in-the-loop TUI dashboard | pending |
+| `01-initializer-cli.md` | Bun CLI scaffolding + status command | pending |
+| `02-agent-status-skill.md` | Skill with wrapper scripts for spawned agents | pending |
+| `03-monitor-tui.md` | Human-in-the-loop TUI dashboard | pending |
 | `04-orchestrator-skill.md` | Skill for orchestrators to read agent status | pending |
 | `05-integration.md` | Wire into worktree-orchestrator, test E2E | pending |
 
@@ -54,33 +57,40 @@ This task implements a cc-sessions-native parallel agent coordination system ins
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│              cc-sessions Parallel Agent System                       │
+│              Parallel Agent System (Decoupled)                       │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
 │  ORCHESTRATOR LAYER (main branch)                                   │
 │  ├── worktree-orchestrator skill    ← Spawning (existing)           │
-│  ├── orchestrator-coordination skill ← Status reading (NEW)         │
-│  └── sessions monitor               ← TUI (NEW CLI)                 │
+│  ├── orchestrator skill             ← Status reading (NEW)          │
+│  └── initializer monitor            ← TUI (NEW CLI)                 │
 │                                                                     │
 │  PERSISTENCE LAYER                                                  │
-│  └── .sessions/state/               ← Status files (NEW)            │
+│  └── .trees/.state/                 ← Status files (NEW)            │
 │      ├── {task-name}.status.json                                    │
 │      └── summary.json                                               │
 │                                                                     │
 │  AGENT LAYER (worktrees)                                            │
 │  ├── agent-status skill             ← Status reporting (NEW)        │
-│  └── sessions status CLI            ← Simple command (NEW)          │
+│  └── initializer status CLI         ← Bun command (NEW)             │
+│                                                                     │
+│  CLI LAYER (Bun-based, bundled with plugin)                         │
+│  └── plugins/initializer/cli/       ← Standalone TypeScript CLI     │
+│      ├── src/commands/status.ts                                     │
+│      ├── src/commands/show.ts                                       │
+│      └── src/commands/monitor.ts                                    │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Key Design Decisions
 
-1. **cc-sessions-native** (not para wrapper) - unified workflow, task file integration
-2. **Status protocol mirrors para** - `sessions status "task" --tests X --todos Y/Z`
-3. **JSON persistence** - `.sessions/state/{task}.status.json` for cross-agent state
-4. **TUI with textual/rich** - Python ecosystem, human-in-the-loop monitoring
-5. **Skills for both roles** - agent-side reporting skill, orchestrator-side reading skill
+1. **Decoupled from cc-sessions** - standalone `initializer` CLI, no dependency on sessions framework
+2. **Bun runtime** - TypeScript, fast cold-start, modern tooling
+3. **Status protocol mirrors para** - `initializer status "task" --tests X --todos Y/Z`
+4. **JSON persistence in `.trees/.state/`** - colocated with worktrees, already gitignored
+5. **Skills provide wrapper scripts** - plus AskUserQuestion tool calls for interactive prompts
+6. **Bundled plugin structure** - CLI lives inside `plugins/initializer/cli/`
 
 ## Reference Materials
 
@@ -507,32 +517,37 @@ Step-by-step procedures with bash examples
 
 Skills can reference their bundled scripts using relative paths: `python scripts/spawn_terminal.py --worktree X`.
 
-### What Needs to Connect: Integration Points for Parallel Agent System
+### Integration Points for Parallel Agent System (Updated Architecture)
 
-**1. New `sessions status` Command for Agents**
+**1. Standalone `initializer` CLI (Bun-based)**
 
-We need to add a new command handler to `sessions/api/router.js` and `sessions/api/state_commands.js`. The current `handleStatusCommand` (state_commands.js lines 648-689) is for human-readable session summaries. We need a parallel command for **agent status reporting**:
+Create a new Bun CLI at `plugins/initializer/cli/` that is completely independent of cc-sessions:
 
-```javascript
-// New command: sessions status "task description" --tests passed --todos 3/7 --blocked
-// Should:
-// 1. Detect task name from current sessions-state.json
-// 2. Parse test status (passed/failed/unknown)
-// 3. Parse todos as "completed/total" fraction
-// 4. Capture blocked state and reason
-// 5. Calculate diff stats (git diff --numstat origin/main)
-// 6. Write to .sessions/state/{task-name}.status.json atomically
+```typescript
+// plugins/initializer/cli/src/index.ts
+// Commands:
+//   initializer status "task description" --tests passed --todos 3/7 --blocked
+//   initializer show [--json] [task-name]
+//   initializer monitor
 ```
 
-This mirrors para's update_status function but adapted to cc-sessions conventions.
+The CLI:
+1. Auto-detects task name from git branch or explicit `--task` flag
+2. Parses test status (passed/failed/unknown)
+3. Parses todos as "completed/total" fraction
+4. Captures blocked state and reason
+5. Calculates diff stats (git diff --numstat origin/main)
+6. Writes to `.trees/.state/{task-name}.status.json` atomically
 
 **2. Status File Schema and Location**
 
-We need to define a new directory: `.sessions/state/` (gitignored) at the repository root. Each agent writes `{task-name}.status.json` with this schema:
+Status files live in `.trees/.state/` (colocated with worktrees, already gitignored):
 
 ```json
 {
   "task_name": "string",
+  "worktree_path": "string",
+  "branch": "string",
   "current_work": "string description",
   "test_status": "passed" | "failed" | "unknown",
   "is_blocked": boolean,
@@ -547,184 +562,94 @@ We need to define a new directory: `.sessions/state/` (gitignored) at the reposi
 }
 ```
 
-The status files should use the same atomic write pattern as sessions-state.json (temp file + fsync + rename).
+Atomic write pattern: temp file + Bun.write() with flush + rename.
 
 **3. Agent-Status Skill for Worktree Agents**
 
-We need a new skill in `plugins/agent-status/` with:
+Plugin at `plugins/initializer/skills/agent-status/`:
 
-- `plugin.json`: Declares the skill for worktree agent contexts
-- `skills/agent-status/SKILL.md`: Documents the `sessions status` command with usage examples
-- `skills/agent-status/scripts/report_status.py`: Helper script for calculating diff stats
+- `SKILL.md`: Documents the `initializer status` command with usage examples
+- `scripts/report_status.sh`: Wrapper script that calls the Bun CLI
+- AskUserQuestion prompts for when to report status
 
-The skill should be auto-loaded when Claude starts in a worktree (detected by presence of `.git` file pointing to main repo). The SKILL.md instructs agents to periodically report status:
+The skill instructs agents to periodically report status:
 
 ```markdown
 ## Status Reporting Protocol
 
-Every 10-15 minutes (or after significant milestones), report your status:
+After significant milestones, report your status using the wrapper script:
 
 ```bash
-sessions status "Implementing auth middleware" --tests passed --todos 3/7
+./scripts/report_status.sh "Implementing auth middleware" --tests passed --todos 3/7
 ```
 
-If blocked, include the --blocked flag:
-
-```bash
-sessions status "Stuck on Redis connection pooling" --tests unknown --todos 2/5 --blocked
-```
+If blocked, use AskUserQuestion to notify the orchestrator:
+- Use the AskUserQuestion tool with blocked reason
+- The orchestrator monitors via `initializer monitor`
 ```
 
-**4. Orchestrator-Coordination Skill for Main Branch**
+**4. Orchestrator Skill for Main Branch**
 
-We need another skill in `plugins/orchestrator-coordination/` with:
+Plugin at `plugins/initializer/skills/orchestrator/`:
 
-- `skills/orchestrator-coordination/SKILL.md`: Documents status reading and monitoring commands
-- `skills/orchestrator-coordination/scripts/read_statuses.py`: Loads all status files, calculates summary
+- `SKILL.md`: Documents status reading and monitoring commands
+- `scripts/show_statuses.sh`: Wrapper for `initializer show --json`
+- AskUserQuestion prompts for intervention decisions
 
-This skill is for the orchestrator (developer on main branch) and provides:
-
+Commands:
 ```bash
 # Show all agent statuses
-sessions status show --json
+initializer show --json
 
 # Show specific agent
-sessions status show m-implement-auth
+initializer show m-implement-auth
 
-# Summary across all agents
-sessions status summary
+# Launch TUI monitor
+initializer monitor
 ```
 
-**5. Sessions Monitor CLI and TUI**
+**5. Monitor TUI**
 
-We need a new top-level command in `sessions/api/router.js`: `monitor`. This should:
+The TUI is part of the Bun CLI (`initializer monitor`):
 
-1. Load all status files from `.sessions/state/*.status.json`
-2. Calculate summary statistics (active/blocked/stale counts)
-3. Launch a Python TUI (using `textual` or `rich`) that:
-   - Displays real-time agent status in a table
-   - Shows progress bars, test status, diff stats
-   - Updates every 2 seconds (reload status files)
-   - Supports keyboard actions (view logs, resume terminal, cancel agent)
-   - Detects stale agents (no update in >30 minutes)
+1. Loads all status files from `.trees/.state/*.status.json`
+2. Calculates summary statistics (active/blocked/stale counts)
+3. Displays real-time agent status in a table
+4. Shows progress bars, test status, diff stats
+5. Updates every 2 seconds (reload status files)
+6. Supports keyboard actions (view logs, resume terminal, cancel agent)
+7. Detects stale agents (no update in >30 minutes)
 
-The monitor should be implemented as `sessions/cli/monitor.py` and invoked via:
-
-```bash
-sessions monitor  # Launch TUI
-sessions monitor --json  # Output JSON for scripting
-```
+Options for TUI implementation:
+- **ink** (React for CLI) - if staying pure Bun/Node
+- **blessed-contrib** - traditional TUI widgets
+- **Python rich/textual** - fallback if Bun TUI libraries insufficient
 
 **6. Integration with spawn_terminal.py**
 
-The spawn_terminal.py script needs to inject status reporting instructions into the prompt template. Update DEFAULT_PROMPT_TEMPLATE (lines 28-37) to include:
+Update DEFAULT_PROMPT_TEMPLATE in spawn_terminal.py to include:
 
 ```
 Status Reporting:
-- Every 10-15 minutes, report status: sessions status "<description>" --tests <status> --todos X/Y
+- After milestones, report: initializer status "<description>" --tests <status> --todos X/Y
 - If blocked, add --blocked flag
-- The orchestrator monitors your status via `sessions monitor`
+- The orchestrator monitors via `initializer monitor`
 ```
-
-This ensures agents know they're part of a coordinated system.
 
 **7. Worktree Detection Logic**
 
-We need a helper function to detect if Claude is running in:
-- **Main repository**: `.git/` is a directory, no active worktree
-- **Worktree agent**: `.git` is a file containing `gitdir: ...` (worktree marker)
-- **Orchestrator mode**: Check for `.trees/` directory existence
+```typescript
+// plugins/initializer/cli/src/lib/context.ts
+function detectContext(): 'worktree_agent' | 'orchestrator' | 'main_repo' | 'unknown' {
+    const gitPath = path.join(process.cwd(), '.git');
+    const treesDir = path.join(process.cwd(), '.trees');
 
-This determines which skills to auto-load (agent-status vs orchestrator-coordination).
-
-### Technical Reference Details
-
-#### New Command Signatures
-
-```javascript
-// sessions/api/state_commands.js
-function handleAgentStatusCommand(args, jsonOutput = false) {
-  // args: { task: string, tests: string, todos?: string, blocked?: boolean, session?: string }
-  // Returns: { success: boolean, message: string }
-}
-```
-
-```python
-# sessions/cli/monitor.py
-def main(json_mode: bool = False, state_dir: Path = None):
-    """Launch status monitor TUI or output JSON summary."""
-    if json_mode:
-        summary = load_status_summary(state_dir)
-        print(json.dumps(summary, indent=2))
-    else:
-        app = MonitorApp(state_dir)
-        app.run()
-```
-
-#### Status File Atomic Write Pattern
-
-```javascript
-// sessions/hooks/shared_state.js pattern (adapt for status files)
-function atomicWriteStatus(statusFilePath, statusObj) {
-    const tempFile = `${statusFilePath}.tmp.${process.pid}`;
-    fs.writeFileSync(tempFile, JSON.stringify(statusObj, null, 2), 'utf-8');
-    const fd = fs.openSync(tempFile, 'r+');
-    fs.fsyncSync(fd);
-    fs.closeSync(fd);
-    fs.renameSync(tempFile, statusFilePath);
-}
-```
-
-#### Diff Stats Calculation
-
-```bash
-# Calculate additions and deletions vs origin/main
-git diff --numstat origin/main | awk '{add+=$1; del+=$2} END {print add, del}'
-```
-
-#### Status File Location Convention
-
-```
-/home/gulp/projects/tinymade-skills/
-├── .sessions/
-│   └── state/
-│       ├── m-implement-auth.status.json
-│       ├── m-implement-api.status.json
-│       └── summary.json  # Cached aggregate for monitor
-├── .trees/  # Git worktrees
-│   ├── feature-auth/
-│   └── feature-api/
-└── sessions/
-    ├── sessions-state.json  # Main repo state
-    └── tasks/  # Shared task files
-```
-
-Worktrees have their own `sessions/sessions-state.json` but status files always write to main repo's `.sessions/state/`.
-
-#### TUI Library Choice
-
-Use **textual** (Python) for the monitor TUI:
-- Async-first architecture (good for real-time updates)
-- Rich widget library (tables, progress bars, containers)
-- Easy keyboard handling and action dispatch
-- Cross-platform terminal support
-
-Alternative: **rich** with manual event loop (more low-level control).
-
-#### Skill Loading Detection
-
-```javascript
-// Detect context in sessions/hooks/shared_state.js or new helper
-function detectContext() {
-    const gitFile = path.join(PROJECT_ROOT, '.git');
-    const treesDir = path.join(PROJECT_ROOT, '.trees');
-
-    if (fs.existsSync(gitFile)) {
-        const stat = fs.statSync(gitFile);
+    if (existsSync(gitPath)) {
+        const stat = statSync(gitPath);
         if (stat.isFile()) {
             // .git is a file → worktree agent
             return 'worktree_agent';
-        } else if (fs.existsSync(treesDir)) {
+        } else if (existsSync(treesDir)) {
             // .git is dir + .trees exists → orchestrator
             return 'orchestrator';
         }
@@ -734,51 +659,122 @@ function detectContext() {
 }
 ```
 
-### Configuration Requirements
+### Technical Reference Details
 
-**New Config Section for Status Reporting:**
+#### CLI Structure
 
-Add to `sessions/sessions-config.json`:
+```
+plugins/initializer/
+├── plugin.json
+├── cli/
+│   ├── package.json          # Bun project
+│   ├── bun.lockb
+│   ├── tsconfig.json
+│   └── src/
+│       ├── index.ts          # Entry point, command routing
+│       ├── commands/
+│       │   ├── status.ts     # Report agent status
+│       │   ├── show.ts       # Display statuses
+│       │   └── monitor.ts    # TUI dashboard
+│       └── lib/
+│           ├── state.ts      # Atomic write helpers
+│           ├── diff.ts       # Git diff stats
+│           └── context.ts    # Worktree detection
+├── skills/
+│   ├── agent-status/
+│   │   ├── SKILL.md
+│   │   └── scripts/
+│   │       └── report_status.sh
+│   └── orchestrator/
+│       ├── SKILL.md
+│       └── scripts/
+│           └── show_statuses.sh
+└── bin/
+    └── initializer           # Symlink or wrapper to run CLI
+```
 
-```json
-{
-  "agent_status": {
-    "enabled": true,
-    "report_interval_minutes": 10,
-    "state_directory": ".sessions/state",
-    "stale_threshold_hours": 2
-  }
+#### Status File Atomic Write Pattern (Bun)
+
+```typescript
+// plugins/initializer/cli/src/lib/state.ts
+async function atomicWriteStatus(statusFilePath: string, statusObj: Status): Promise<void> {
+    const tempFile = `${statusFilePath}.tmp.${process.pid}`;
+    await Bun.write(tempFile, JSON.stringify(statusObj, null, 2));
+    // Bun.write flushes by default
+    await fs.promises.rename(tempFile, statusFilePath);
 }
 ```
 
-**Environment Variables:**
+#### Diff Stats Calculation
 
-- `SESSIONS_STATE_DIR`: Override default `.sessions/state` location
-- `SESSIONS_MONITOR_REFRESH`: Monitor refresh interval in seconds (default: 2)
+```typescript
+// plugins/initializer/cli/src/lib/diff.ts
+async function getDiffStats(): Promise<{ additions: number; deletions: number }> {
+    const proc = Bun.spawn(['git', 'diff', '--numstat', 'origin/main']);
+    const output = await new Response(proc.stdout).text();
+
+    let additions = 0, deletions = 0;
+    for (const line of output.trim().split('\n')) {
+        const [add, del] = line.split('\t');
+        additions += parseInt(add) || 0;
+        deletions += parseInt(del) || 0;
+    }
+    return { additions, deletions };
+}
+```
+
+#### Status File Location
+
+```
+/home/gulp/projects/tinymade-skills/
+├── .trees/                           # Git worktrees (gitignored)
+│   ├── .state/                       # Status files (NEW)
+│   │   ├── m-implement-auth.status.json
+│   │   ├── m-implement-api.status.json
+│   │   └── summary.json              # Cached aggregate
+│   ├── feature-auth/                 # Worktree
+│   └── feature-api/                  # Worktree
+├── plugins/initializer/              # Plugin with CLI
+└── sessions/tasks/                   # Task files (shared)
+```
+
+#### Environment Variables
+
+- `INITIALIZER_STATE_DIR`: Override default `.trees/.state` location
+- `INITIALIZER_MONITOR_REFRESH`: Monitor refresh interval in seconds (default: 2)
+- `INITIALIZER_STALE_THRESHOLD`: Hours before marking agent stale (default: 2)
 
 ### File Paths for Implementation
 
 **New Files to Create:**
 
-- `sessions/api/agent_status_commands.js` - Agent status CLI handlers
-- `sessions/cli/monitor.py` - TUI monitor application
-- `plugins/agent-status/plugin.json` - Agent-side plugin manifest
-- `plugins/agent-status/skills/agent-status/SKILL.md` - Agent status reporting skill
-- `plugins/agent-status/skills/agent-status/scripts/calc_diff_stats.py` - Diff calculation helper
-- `plugins/orchestrator-coordination/plugin.json` - Orchestrator plugin manifest
-- `plugins/orchestrator-coordination/skills/orchestrator-coordination/SKILL.md` - Status reading skill
-- `.sessions/state/` - Directory for status files (add to .gitignore)
+- `plugins/initializer/plugin.json` - Plugin manifest
+- `plugins/initializer/cli/package.json` - Bun project config
+- `plugins/initializer/cli/src/index.ts` - CLI entry point
+- `plugins/initializer/cli/src/commands/status.ts` - Status reporting command
+- `plugins/initializer/cli/src/commands/show.ts` - Status display command
+- `plugins/initializer/cli/src/commands/monitor.ts` - TUI monitor
+- `plugins/initializer/cli/src/lib/state.ts` - Atomic write helpers
+- `plugins/initializer/cli/src/lib/diff.ts` - Git diff calculation
+- `plugins/initializer/cli/src/lib/context.ts` - Worktree detection
+- `plugins/initializer/skills/agent-status/SKILL.md` - Agent skill
+- `plugins/initializer/skills/agent-status/scripts/report_status.sh` - Wrapper
+- `plugins/initializer/skills/orchestrator/SKILL.md` - Orchestrator skill
+- `plugins/initializer/skills/orchestrator/scripts/show_statuses.sh` - Wrapper
+- `plugins/initializer/bin/initializer` - CLI wrapper/symlink
 
 **Files to Modify:**
 
-- `sessions/api/router.js` - Add `agent-status` and `monitor` command handlers
-- `sessions/api/state_commands.js` - Add agent status reporting functions
 - `plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_terminal.py` - Update prompt template
-- `.gitignore` - Add `.sessions/state/`
+- `.gitignore` - Ensure `.trees/` covers `.trees/.state/` (already does)
 
 ## User Notes
 <!-- Any specific notes or requirements from the developer -->
+- Decoupled from cc-sessions - use standalone Bun CLI
+- Status files in `.trees/.state/` (colocated with worktrees)
+- Skills provide wrapper scripts + AskUserQuestion prompts
 
 ## Work Log
 <!-- Updated as work progresses -->
 - [2025-12-10] Task created after deep investigation of para architecture
+- [2025-12-14] Architecture updated: decoupled from cc-sessions, standalone `initializer` CLI with Bun runtime, status files in `.trees/.state/`
