@@ -346,7 +346,22 @@ bun run scripts/session.ts migrate
 - Default timeout: 90 seconds
 - Use `--timeout` or `-t` flag to override (value in seconds)
 - Applies to `create`, `continue`, and `resume` commands
-- Useful for complex research queries or large context operations
+
+**When to Use Longer Timeouts (REQUIRED):**
+
+| Condition | Timeout |
+|-----------|---------|
+| `--include-dirs` with >10 files | `--timeout 180` |
+| `--include-dirs` with >30 files | `--timeout 300` |
+| Piping documents >5000 words | `--timeout 180` |
+| Multi-step reasoning or comparison | `--timeout 180` |
+| "Analyze entire codebase" queries | `--timeout 300` |
+| Session with accumulated context (3+ turns) | `--timeout 180` |
+
+**Default 90s is appropriate for:**
+- Simple factual queries
+- Single file analysis (<1000 lines)
+- Short prompts with minimal context
 
 **Session Health Status:**
 - `healthy` - Session exists in gemini-cli and can be resumed
