@@ -45,10 +45,13 @@ import {
   parseGeminiSession,
   listGeminiSessionFiles,
   getMostRecentSession,
+  listAllProjectHashes,
+  extractSessionPreview,
   verifySessionExists as verifySessionExistsOnDisk,
   type OffloadMetadata,
   type SessionMapping,
-  type GeminiSessionFile
+  type GeminiSessionFile,
+  type SessionPreview
 } from "./state.ts";
 import { indexOffload } from "./memory.ts";
 
@@ -954,6 +957,227 @@ async function cmdMigrate() {
   };
 }
 
+
+/**
+ * Discovered session info for display.
+ */
+interface DiscoveredSession {
+  index: number;
+  sessionId: string;
+  projectHash: string;
+  sessionFile: string;
+  startTime: string;
+  lastUpdated: string;
+  messageCount: number;
+  preview: SessionPreview | null;
+  isCurrentProject: boolean;
+}
+
+/**
+ * Discover unmapped gemini-cli sessions.
+ * Scans gemini's session storage and compares against tracked sessions.
+ */
+async function cmdDiscover(opts: { allProjects?: boolean } = {}) {
+  const currentProjectHash = getGeminiProjectHash();
+  const state = await loadState();
+
+  // Collect all tracked sessionIds
+  const trackedSessionIds = new Set<string>();
+  for (const mapping of Object.values(state.named_sessions)) {
+    if (!isLegacyMapping(mapping)) {
+      trackedSessionIds.add(mapping.sessionId);
+    }
+  }
+
+  // Get project hashes to scan
+  const projectHashes = opts.allProjects
+    ? listAllProjectHashes()
+    : [currentProjectHash];
+
+  const unmappedSessions: DiscoveredSession[] = [];
+  let totalGeminiSessions = 0;
+  let displayIndex = 0;
+
+  for (const projectHash of projectHashes) {
+    const sessions = await listGeminiSessionFiles(projectHash);
+    totalGeminiSessions += sessions.length;
+
+    for (const { path, parsed } of sessions) {
+      if (!trackedSessionIds.has(parsed.sessionId)) {
+        const preview = await extractSessionPreview(path);
+        unmappedSessions.push({
+          index: displayIndex++,
+          sessionId: parsed.sessionId,
+          projectHash: parsed.projectHash,
+          sessionFile: path,
+          startTime: parsed.startTime,
+          lastUpdated: parsed.lastUpdated,
+          messageCount: parsed.messageCount,
+          preview,
+          isCurrentProject: parsed.projectHash === currentProjectHash
+        });
+      }
+    }
+  }
+
+  return {
+    action: "discover",
+    unmapped_sessions: unmappedSessions,
+    total_gemini_sessions: totalGeminiSessions,
+    total_tracked_sessions: trackedSessionIds.size,
+    current_project_hash: currentProjectHash,
+    scanned_projects: projectHashes.length,
+    success: true
+  };
+}
+
+/**
+ * Adopt an existing gemini-cli session into tracked sessions.
+ * Creates a SessionMapping and indexes all historical turns in mem0.
+ */
+async function cmdAdopt(args: {
+  index?: number;
+  sessionId?: string;
+  name: string;
+  projectHash?: string;
+}) {
+  if (args.index === undefined && !args.sessionId) {
+    return { success: false, error: "adopt requires --index or --session-id" };
+  }
+
+  if (!args.name) {
+    return { success: false, error: "adopt requires --name" };
+  }
+
+  const state = await loadState();
+
+  // Check if name already exists
+  if (state.named_sessions[args.name]) {
+    return {
+      success: false,
+      error: `Session name "${args.name}" already exists. Use a different name.`
+    };
+  }
+
+  // Determine project hash to search in
+  const geminiProjectHash = args.projectHash || getGeminiProjectHash();
+
+  // Find the session
+  let sessionFile: string | null = null;
+  let sessionId: string | null = null;
+
+  if (args.sessionId) {
+    // Find by sessionId
+    sessionFile = await findSessionFile(args.sessionId, geminiProjectHash);
+    sessionId = args.sessionId;
+  } else if (args.index !== undefined) {
+    // Find by discovery index - need to re-run discovery to get the mapping
+    const discovery = await cmdDiscover({ allProjects: !!args.projectHash });
+    const session = discovery.unmapped_sessions.find(s => s.index === args.index);
+    if (!session) {
+      return {
+        success: false,
+        error: `No unmapped session found at index ${args.index}. Run 'discover' to see available sessions.`
+      };
+    }
+    sessionFile = session.sessionFile;
+    sessionId = session.sessionId;
+  }
+
+  if (!sessionFile || !sessionId) {
+    return {
+      success: false,
+      error: "Could not find session. It may have been purged by gemini-cli."
+    };
+  }
+
+  // Check if sessionId is already tracked under a different name
+  for (const [existingName, mapping] of Object.entries(state.named_sessions)) {
+    if (!isLegacyMapping(mapping) && mapping.sessionId === sessionId) {
+      return {
+        success: false,
+        error: `This session is already tracked as "${existingName}".`
+      };
+    }
+  }
+
+  // Parse session file
+  const parsed = await parseGeminiSession(sessionFile);
+  if (!parsed) {
+    return {
+      success: false,
+      error: "Could not parse session file. It may be corrupted."
+    };
+  }
+
+  // Read full session data for indexing
+  let sessionData: { messages?: Array<{ type: string; content: string }> };
+  try {
+    sessionData = await Bun.file(sessionFile).json();
+  } catch {
+    return {
+      success: false,
+      error: "Could not read session file contents."
+    };
+  }
+
+  const messages = sessionData.messages || [];
+
+  // Create SessionMapping
+  const mapping: SessionMapping = {
+    sessionId: parsed.sessionId,
+    sessionFile,
+    geminiProjectHash: parsed.projectHash,
+    createdAt: parsed.startTime,
+    lastTurn: Math.ceil(parsed.messageCount / 2),
+    lastPromptPreview: parsed.lastMessagePreview
+  };
+
+  // Save mapping first
+  state.named_sessions[args.name] = mapping;
+  await saveState(state);
+
+  // Index historical turns in mem0
+  let indexedCount = 0;
+  const indexErrors: string[] = [];
+
+  // Pair messages into turns (user + gemini pairs)
+  for (let i = 0; i < messages.length; i += 2) {
+    const userMsg = messages[i];
+    const geminiMsg = messages[i + 1];
+
+    if (userMsg?.type !== "user") continue;
+    if (!geminiMsg || geminiMsg.type !== "gemini") continue;
+
+    try {
+      const result = await persistSessionTurn({
+        sessionName: args.name,
+        prompt: userMsg.content || "",
+        response: geminiMsg.content || "",
+        geminiIndex: 0, // Index not relevant for historical turns
+        isNewSession: indexedCount === 0
+      });
+
+      if (result.persisted) {
+        indexedCount++;
+      }
+    } catch (e) {
+      indexErrors.push(`Turn ${indexedCount + 1}: ${e}`);
+    }
+  }
+
+  return {
+    action: "adopt",
+    session_name: args.name,
+    sessionId: parsed.sessionId,
+    session_file: sessionFile,
+    total_messages: messages.length,
+    turns_indexed: indexedCount,
+    index_errors: indexErrors.length > 0 ? indexErrors : undefined,
+    success: true
+  };
+}
+
 async function main() {
   const args = Bun.argv.slice(2);
   const command = args[0];
@@ -961,7 +1185,7 @@ async function main() {
   if (!command) {
     console.log(JSON.stringify({
       success: false,
-      error: "Usage: session.ts <list|create|continue|resume|delete|migrate> [options]"
+      error: "Usage: session.ts <list|create|continue|resume|delete|migrate|discover|adopt> [options]"
     }, null, 2));
     process.exit(1);
   }
@@ -978,6 +1202,12 @@ async function main() {
         opts.index = parseInt(args[++i]);
       } else if (args[i] === "--timeout" || args[i] === "-t") {
         opts.timeout = parseInt(args[++i]);
+      } else if (args[i] === "--all-projects" || args[i] === "-a") {
+        opts.allProjects = true;
+      } else if (args[i] === "--session-id" || args[i] === "-s") {
+        opts.sessionId = args[++i];
+      } else if (args[i] === "--project-hash") {
+        opts.projectHash = args[++i];
       }
     }
     return opts;
@@ -1033,6 +1263,25 @@ async function main() {
       break;
     case "migrate":
       result = await cmdMigrate();
+      break;
+    case "discover":
+      result = await cmdDiscover({
+        allProjects: opts.allProjects as boolean | undefined
+      });
+      break;
+    case "adopt":
+      if (!opts.name) {
+        result = { success: false, error: "adopt requires --name" };
+      } else if (opts.index === undefined && !opts.sessionId) {
+        result = { success: false, error: "adopt requires --index or --session-id" };
+      } else {
+        result = await cmdAdopt({
+          index: opts.index as number | undefined,
+          sessionId: opts.sessionId as string | undefined,
+          name: opts.name as string,
+          projectHash: opts.projectHash as string | undefined
+        });
+      }
       break;
     default:
       result = { success: false, error: `Unknown command: ${command}` };

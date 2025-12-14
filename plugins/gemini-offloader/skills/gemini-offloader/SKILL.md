@@ -334,7 +334,72 @@ bun run scripts/session.ts delete --index 5
 
 # Migrate legacy sessions to sessionId-based tracking
 bun run scripts/session.ts migrate
+
+# Discover unmapped gemini-cli sessions
+bun run scripts/session.ts discover
+
+# Discover sessions across all projects
+bun run scripts/session.ts discover --all-projects
+
+# Adopt an existing session by discovery index
+bun run scripts/session.ts adopt --index 0 --name "my-research"
+
+# Adopt by session ID
+bun run scripts/session.ts adopt --session-id "e028b0d3-..." --name "my-research"
 ```
+
+**Session Discovery & Adoption:**
+
+Sessions created directly via `gemini` CLI (outside this skill) are not automatically tracked. The `discover` and `adopt` commands let you find and adopt these sessions:
+
+- **discover**: Scans gemini-cli's session storage and shows sessions not tracked by the skill
+- **adopt**: Creates a SessionMapping for an existing session and indexes all historical turns in mem0
+
+Discovery output includes a preview of each session's first prompt and response:
+```json
+{
+  "action": "discover",
+  "unmapped_sessions": [
+    {
+      "index": 0,
+      "sessionId": "e028b0d3-80ff-4250-8fe0-84cbe6de2e77",
+      "projectHash": "f3c7b...",
+      "preview": {
+        "firstPrompt": "Research WebAssembly for server-side...",
+        "firstResponse": "WebAssembly (WASM) for server-side...",
+        "totalTurns": 3
+      },
+      "isCurrentProject": true
+    }
+  ],
+  "total_gemini_sessions": 45,
+  "total_tracked_sessions": 3
+}
+```
+
+Adopt creates a mapping and indexes historical turns:
+```json
+{
+  "action": "adopt",
+  "session_name": "my-research",
+  "sessionId": "e028b0d3-...",
+  "turns_indexed": 3,
+  "success": true
+}
+```
+
+**Session Tracking Limitations:**
+
+The skill only automatically tracks sessions created through `session.ts create`. Sessions created by:
+- Running `gemini` CLI directly
+- Other tools using gemini-cli
+- Different project directories
+
+...will NOT appear in `session.ts list` until adopted. Use `discover` to find these sessions.
+
+**Cross-Project Sessions:**
+
+By default, `discover` only shows sessions from the current project directory. Use `--all-projects` to scan all project hashes in `~/.gemini/tmp/`. Each discovered session shows `isCurrentProject: true/false` to indicate origin.
 
 **Session Persistence:** All session turns automatically persist to `~/.gemini_offloader/`:
 - Full responses saved as timestamped files: `full_response-{ISO8601}.md`
@@ -476,6 +541,18 @@ bun run scripts/memory.ts search-scoped --scope agent --query "best practices"
 ```
 
 ### Filter Past Research
+
+**`filter-local` vs `search` - Understanding the Difference:**
+
+| Command | Method | Use When |
+|---------|--------|----------|
+| `filter-local` | Keyword/metadata matching on local index | Looking for specific sessions, time ranges, known keywords |
+| `search` | Semantic vector search via mem0 | Finding conceptually similar content, fuzzy matching |
+
+`filter-local` is fast and works offline, but only matches exact keywords and metadata. `search` understands meaning (e.g., "WASM performance" finds "WebAssembly benchmarks") but requires mem0.
+
+**Important:** Both commands only find **tracked** sessions (created via `session.ts create` or adopted via `adopt`). Sessions created directly via `gemini` CLI won't appear until adopted.
+
 ```bash
 # Filter local index with various criteria
 bun run scripts/memory.ts filter-local --since 7d              # Last 7 days

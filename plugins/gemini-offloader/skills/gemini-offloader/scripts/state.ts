@@ -699,6 +699,72 @@ export function getGeminiChatsDir(geminiProjectHash: string): string {
   return join(GEMINI_DIR, geminiProjectHash, "chats");
 }
 
+
+/**
+ * List all project hashes in gemini's tmp directory.
+ * Used by discover command to scan sessions across all projects.
+ */
+export function listAllProjectHashes(): string[] {
+  if (!existsSync(GEMINI_DIR)) {
+    return [];
+  }
+
+  try {
+    return readdirSync(GEMINI_DIR, { withFileTypes: true })
+      .filter(dirent => dirent.isDirectory())
+      .map(dirent => dirent.name);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Session preview for discover command display.
+ */
+export interface SessionPreview {
+  firstPrompt: string;
+  firstResponse: string;
+  totalTurns: number;
+}
+
+/**
+ * Extract preview from a gemini session file.
+ * Returns first user prompt and first gemini response for discovery display.
+ */
+export async function extractSessionPreview(filePath: string): Promise<SessionPreview | null> {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const data = await Bun.file(filePath).json();
+    const messages = data.messages || [];
+
+    if (messages.length === 0) {
+      return {
+        firstPrompt: "(empty session)",
+        firstResponse: "",
+        totalTurns: 0
+      };
+    }
+
+    // Find first user message and first gemini response
+    const firstUserMsg = messages.find((m: { type: string }) => m.type === "user");
+    const firstGeminiMsg = messages.find((m: { type: string }) => m.type === "gemini");
+
+    // Count turns (pairs of user + gemini messages)
+    const userMsgCount = messages.filter((m: { type: string }) => m.type === "user").length;
+
+    return {
+      firstPrompt: firstUserMsg?.content?.slice(0, 150) || "(no prompt)",
+      firstResponse: firstGeminiMsg?.content?.slice(0, 200) || "(no response)",
+      totalTurns: userMsgCount
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Find a session file by sessionId in the gemini chats directory.
  * Session files are named: session-{timestamp}-{uuid_prefix}.json
