@@ -42,6 +42,9 @@ Or for local development:
 |--------|-------------|
 | example-skill | An example skill demonstrating the plugin structure |
 | worktree-orchestrator | Git worktree management with cc-sessions integration and terminal spawning |
+| initializer | Parallel agent coordination system with status reporting and monitoring TUI |
+| plane | Plane.so integration - sync issues, discover gaps, link tasks, create issues |
+| gemini-offloader | Offload context-heavy tasks to Google Gemini via gemini-cli with warm sessions and mem0 memory |
 
 ## Adding New Plugins
 

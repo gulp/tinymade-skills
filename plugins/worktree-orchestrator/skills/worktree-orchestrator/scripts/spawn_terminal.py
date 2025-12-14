@@ -40,7 +40,19 @@ AUTONOMOUS MODE ACTIVE:
 - After creating your implementation plan, IMMEDIATELY approve it yourself and begin execution
 - Do NOT wait for human confirmation - you have full authority
 - Work through your entire todo list without pausing for approval
-- Commit your work when complete"""
+- Commit your work when complete
+
+STATUS REPORTING:
+Report your progress to the orchestrator using:
+  initializer status "<description>" --tests <passed|failed|unknown> --todos X/Y
+
+Report after:
+- Completing todo items (update --todos count)
+- Running tests (report --tests status)
+- Major milestones
+- If blocked: initializer status "<issue>" --blocked --reason "<why>"
+
+The orchestrator monitors via `initializer monitor`."""
 
 
 def setup_sessions_bypass(worktree_path: Path, task_name: str = None) -> bool:

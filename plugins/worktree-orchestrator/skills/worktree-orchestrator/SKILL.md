@@ -175,6 +175,8 @@ python scripts/spawn_terminal.py --worktree .trees/feature-foo --command "vim ."
 | `--dry-run, -n` | Print command without executing |
 | `--json, -j` | Output JSON |
 
+**Note**: When spawning autonomous agents with `--task` or `--autonomous`, agents automatically inject the `initializer` plugin's status reporting commands into their prompt. See the **initializer** plugin for agent status monitoring capabilities.
+
 ### Autonomous Mode (cc-sessions Integration)
 
 When `--task` flag is provided, spawn_terminal.py automatically:
@@ -211,6 +213,7 @@ This spawns a Claude instance that will:
 - Skip DAIC discussion phase (implementation mode)
 - Self-approve implementation plan
 - Execute without pausing for confirmation
+- Report status to orchestrator via `initializer status` command
 - Commit work when complete
 
 **To spawn without autonomous mode** (requires manual approval):
@@ -249,6 +252,25 @@ cat .trees/feature-pick-cli/src/file.ts
 | "invalid reference" | Use `-b` flag for new branch |
 | "already exists" | Directory exists; remove or use different path |
 | "already checked out" | Branch in another worktree; navigate there instead |
+
+## Parallel Agent Monitoring
+
+For monitoring agents spawned with `--task` or `--autonomous`, use the **initializer** plugin:
+
+```bash
+# Install initializer plugin for agent status monitoring
+/plugin install initializer@tinymade-skills
+
+# View agent statuses (from orchestrator)
+initializer show
+
+# Launch monitoring TUI
+initializer monitor
+```
+
+See the **initializer** plugin documentation for:
+- `agent-status` skill - For agents to report their progress
+- `agent-monitor` skill - For orchestrators to view agent statuses
 
 ## Reference Materials
 

@@ -163,6 +163,10 @@ Next steps:
 
 Or spawn terminal with Claude auto-start:
   python scripts/spawn_terminal.py --worktree .trees/feature-pick-cli --task m-implement-pick-cli
+
+Monitor agent progress (requires initializer plugin):
+  initializer show
+  initializer monitor
 ```
 
 ---
