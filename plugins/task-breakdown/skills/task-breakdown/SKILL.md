@@ -194,6 +194,195 @@ python plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_
   --task h-implement-system/01-phase-one.md
 ```
 
+## Interactive Breakdown Workflow
+
+For complex tasks or when user wants collaborative breakdown, use this conversational flow instead of the automated workflow above.
+
+### Phase 1: Initial Analysis
+
+```bash
+# Get task metadata
+TASK_INFO=$(bun scripts/analyze_task.ts sessions/tasks/[task-file].md --json)
+```
+
+Present findings to user:
+
+```markdown
+[ANALYSIS: Task Complexity]
+
+Task: [name]
+Branch: [branch]
+Success Criteria: [count] items
+Complexity: [low/medium/high]
+
+The task has [count] success criteria, suggesting [assessment].
+
+Before I propose subtasks, I have some questions:
+```
+
+### Phase 2: Clarifying Questions
+
+Ask these questions based on task characteristics:
+
+**Scope Questions** (ask when criteria seem overlapping):
+- "Criteria 2 and 5 both mention [X]. Should these be in the same subtask or separate?"
+- "Is [feature Y] a prerequisite for [feature Z], or can they be worked in parallel?"
+
+**Dependency Questions** (ask when order matters):
+- "Does the [component] need to exist before [other component] can be built?"
+- "Are there any external dependencies (APIs, libraries) that might block certain subtasks?"
+
+**Priority Questions** (ask when not obvious):
+- "Which criteria are most critical to the overall task success?"
+- "Are there any criteria that could be deferred to a follow-up task?"
+
+**Granularity Questions** (ask when criteria are broad):
+- "Criterion [X] seems broad. Should it be split into multiple subtasks?"
+- "How detailed should each subtask be? Prefer fewer large subtasks or more small ones?"
+
+### Phase 3: Collaborative Refinement
+
+After gathering answers, present refined proposal:
+
+```markdown
+[REFINED PROPOSAL: Task Breakdown]
+
+Based on your input, here's the adjusted breakdown:
+
+1. 01-[name].md (prerequisite for 2, 3)
+   - Problem: [refined based on discussion]
+   - Success: [criteria derived from user input]
+   - Note: [any special considerations mentioned]
+
+2. 02-[name].md (can parallel with 3)
+   - Problem: [...]
+   - Success: [...]
+
+3. 03-[name].md (can parallel with 2)
+   - Problem: [...]
+   - Success: [...]
+
+Dependencies: 1 → (2, 3)
+Parallel opportunities: Subtasks 2 and 3 can run simultaneously after 1 completes.
+
+Changes from initial proposal:
+- [What changed and why based on user feedback]
+
+Ready to generate these subtasks? (yes/revise/cancel)
+```
+
+### Phase 4: Iterative Adjustment
+
+If user says "revise":
+- Ask which specific subtask(s) need adjustment
+- Gather specific feedback
+- Re-present updated proposal
+- Repeat until user approves
+
+### When to Use Interactive vs Automated
+
+| Situation | Mode |
+|-----------|------|
+| User says "break down quickly" | Automated (Core Workflow) |
+| User says "help me plan" | Interactive |
+| Task has > 8 criteria | Interactive (recommend) |
+| Criteria have unclear dependencies | Interactive |
+| User is unfamiliar with codebase | Interactive |
+| Simple, obvious breakdown | Automated |
+
+## Clarifying Question Templates
+
+Reference these when asking questions during interactive breakdown:
+
+### Scope & Boundaries
+- "Should [X] include [Y] or is that separate work?"
+- "Where does this subtask's responsibility end and the next begin?"
+- "Is [edge case] in scope for this breakdown?"
+
+### Technical Dependencies
+- "Does [A] need to be complete before [B] can start?"
+- "Are there shared utilities/types that multiple subtasks will need?"
+- "Which subtask should own the shared infrastructure?"
+
+### Priority & Ordering
+- "If we could only complete 2 of these 4 subtasks, which would you prioritize?"
+- "Is there a critical path through these subtasks?"
+- "Any subtasks that are nice-to-have vs must-have?"
+
+### Complexity Assessment
+- "This criterion seems complex. Is it actually multiple tasks in disguise?"
+- "Should this be 2 smaller subtasks or 1 larger one?"
+- "Are there unknowns here that suggest a research/spike subtask first?"
+
+### Integration Points
+- "How should subtask [X] hand off to subtask [Y]?"
+- "What's the integration test strategy across subtasks?"
+- "Should there be a final integration subtask?"
+
+## Post-Breakdown: Worktree Setup
+
+After breakdown is complete, optionally set up parallel execution:
+
+### Quick Setup (Single Worktree)
+
+```bash
+# 1. Get branch from parent task
+BRANCH=$(bun scripts/analyze_task.ts sessions/tasks/[task-dir]/README.md --json | jq -r '.branch')
+FOLDER=${BRANCH//\//-}
+
+# 2. Create worktree
+git worktree add .trees/$FOLDER $BRANCH
+
+# 3. Verify setup
+ls .trees/$FOLDER
+```
+
+### Spawn Agents for Subtasks
+
+Using worktree-orchestrator:
+
+```bash
+# Spawn autonomous agent for a specific subtask
+python plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_terminal.py \
+  --worktree .trees/$FOLDER \
+  --autonomous \
+  --task [task-dir]/01-first-subtask.md
+```
+
+### Full Parallel Setup
+
+For maximum parallelism (one agent per subtask):
+
+```bash
+# List all subtasks
+SUBTASKS=$(ls sessions/tasks/[task-dir]/*.md | grep -v README.md)
+
+# Create worktree (shared by all subtasks)
+git worktree add .trees/$FOLDER $BRANCH
+
+# Spawn agent for each subtask
+for subtask in $SUBTASKS; do
+  python plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_terminal.py \
+    --worktree .trees/$FOLDER \
+    --autonomous \
+    --task "$subtask"
+done
+```
+
+**Note**: All subtasks share the same branch/worktree. This is by design - subtasks are phases of the same feature, not independent features.
+
+### Worktree Cleanup
+
+After all subtasks complete:
+
+```bash
+# Check if safe to remove
+python plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/check_cleanup_safe.py .trees/$FOLDER
+
+# Remove worktree
+git worktree remove .trees/$FOLDER
+```
+
 ## Error Handling
 
 | Error | Resolution |
@@ -202,3 +391,5 @@ python plugins/worktree-orchestrator/skills/worktree-orchestrator/scripts/spawn_
 | Already a directory task | Skip conversion, proceed with subtask creation |
 | No success criteria | Ask user to define criteria first |
 | Index not found | Skip index update, warn user |
+| Worktree already exists | Use existing worktree or remove first |
+| Branch doesn't exist | Create branch from main before worktree setup |
