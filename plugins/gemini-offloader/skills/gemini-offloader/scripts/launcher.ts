@@ -10,7 +10,13 @@ import { existsSync } from "fs";
 import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
-import { isProjectDirectory, getOrCreateProject, ensureProjectDir } from "./state";
+import {
+  isProjectDirectory,
+  getOrCreateProject,
+  getGeminiProjectHash,
+  listGeminiSessionFiles,
+  type SessionMapping
+} from "./state";
 
 // State paths
 const BASE_DIR = join(homedir(), ".gemini_offloader");
@@ -41,7 +47,12 @@ interface LauncherResult {
     path: string;
     hash: string;
     cache_entries: number;
-    active_sessions: string[];
+    active_sessions: Array<{
+      name: string;
+      sessionId?: string;
+      health: "healthy" | "stale" | "legacy";
+      lastTurn?: number;
+    }>;
   } | null;
 
   // Global stats
@@ -189,7 +200,12 @@ async function getProjectContext(): Promise<{
   path: string;
   hash: string;
   cache_entries: number;
-  active_sessions: string[];
+  active_sessions: Array<{
+    name: string;
+    sessionId?: string;
+    health: "healthy" | "stale" | "legacy";
+    lastTurn?: number;
+  }>;
   auto_initialized: boolean;
 } | null> {
   // Guard: only works in git project directories
@@ -206,7 +222,12 @@ async function getProjectContext(): Promise<{
     path: process.cwd(),
     hash: project.hash,
     cache_entries: 0,
-    active_sessions: [] as string[],
+    active_sessions: [] as Array<{
+      name: string;
+      sessionId?: string;
+      health: "healthy" | "stale" | "legacy";
+      lastTurn?: number;
+    }>,
     auto_initialized: project.initialized,
   };
 
@@ -217,10 +238,35 @@ async function getProjectContext(): Promise<{
       context.cache_entries = entries.length;
     }
 
-    const sessionsDir = join(projDir, "sessions");
-    if (existsSync(sessionsDir)) {
-      const sessions = await readdir(sessionsDir);
-      context.active_sessions = sessions;
+    // Load session mappings from state file
+    const sessionStatePath = join(homedir(), ".config", "gemini-offloader", "sessions.json");
+    if (existsSync(sessionStatePath)) {
+      const stateContent = await readFile(sessionStatePath, "utf-8");
+      const state = JSON.parse(stateContent);
+
+      // Get gemini's session files for health check
+      const geminiProjectHash = getGeminiProjectHash();
+      const geminiSessions = await listGeminiSessionFiles(geminiProjectHash);
+      const geminiSessionIds = new Set(geminiSessions.map(s => s.parsed.sessionId));
+
+      for (const [name, mapping] of Object.entries(state.named_sessions || {})) {
+        if (typeof mapping === "number") {
+          // Legacy index-only mapping
+          context.active_sessions.push({
+            name,
+            health: "legacy",
+          });
+        } else {
+          const sessionMapping = mapping as SessionMapping;
+          const isHealthy = geminiSessionIds.has(sessionMapping.sessionId);
+          context.active_sessions.push({
+            name,
+            sessionId: sessionMapping.sessionId,
+            health: isHealthy ? "healthy" : "stale",
+            lastTurn: sessionMapping.lastTurn,
+          });
+        }
+      }
     }
   } catch {}
 
@@ -231,7 +277,7 @@ function buildOperations(
   installed: boolean,
   authenticated: boolean,
   stateInitialized: boolean,
-  project: { cache_entries: number; active_sessions: string[] } | null,
+  project: { cache_entries: number; active_sessions: Array<{ name: string; sessionId?: string; health: string; lastTurn?: number }> } | null,
   global: { total_cache_entries: number; index_entries: number }
 ): Operation[] {
   const ops: Operation[] = [];
@@ -245,14 +291,27 @@ function buildOperations(
     reason: !installed ? "gemini-cli not installed" : !authenticated ? "Authentication required" : undefined,
   });
 
-  // Manage sessions
-  const hasSessions = (project?.active_sessions.length || 0) > 0;
+  // Build session status summary
+  const sessions = project?.active_sessions || [];
+  const healthySessions = sessions.filter(s => s.health === "healthy");
+  const staleSessions = sessions.filter(s => s.health === "stale");
+  const legacySessions = sessions.filter(s => s.health === "legacy");
+
+  const hasSessions = sessions.length > 0;
+  let sessionDesc = "Create multi-turn research sessions for deep dives.";
+  if (hasSessions) {
+    const parts = [];
+    if (healthySessions.length > 0) parts.push(`${healthySessions.length} healthy`);
+    if (staleSessions.length > 0) parts.push(`${staleSessions.length} stale`);
+    if (legacySessions.length > 0) parts.push(`${legacySessions.length} legacy`);
+    sessionDesc = `${sessions.length} session(s): ${parts.join(", ")}.`;
+    if (legacySessions.length > 0) sessionDesc += " Run 'migrate' to upgrade legacy sessions.";
+  }
+
   ops.push({
     id: "sessions",
     label: "Manage research sessions",
-    description: hasSessions
-      ? `Create, continue, or delete multi-turn sessions. ${project?.active_sessions.length} active session(s).`
-      : "Create multi-turn research sessions for deep dives.",
+    description: sessionDesc,
     available: installed && authenticated,
     reason: !installed ? "gemini-cli not installed" : !authenticated ? "Authentication required" : undefined,
     context: hasSessions ? { sessions: project?.active_sessions } : undefined,
@@ -304,7 +363,7 @@ function determineSuggestion(
   installed: boolean,
   authenticated: boolean,
   stateInitialized: boolean,
-  project: { cache_entries: number; active_sessions: string[] } | null
+  project: { cache_entries: number; active_sessions: Array<{ name: string; health: string }> } | null
 ): { operation: string; reason: string } | null {
   // Not ready - suggest status check
   if (!installed || !authenticated) {
@@ -316,11 +375,23 @@ function determineSuggestion(
     };
   }
 
-  // Has active sessions - suggest continuing
-  if (project && project.active_sessions.length > 0) {
+  const sessions = project?.active_sessions || [];
+  const healthySessions = sessions.filter(s => s.health === "healthy");
+  const legacySessions = sessions.filter(s => s.health === "legacy");
+
+  // Has healthy sessions - suggest continuing
+  if (healthySessions.length > 0) {
     return {
       operation: "sessions",
-      reason: `You have ${project.active_sessions.length} active session(s) you can continue`,
+      reason: `Continue '${healthySessions[0].name}' or ${healthySessions.length} other healthy session(s)`,
+    };
+  }
+
+  // Has legacy sessions - suggest migration
+  if (legacySessions.length > 0) {
+    return {
+      operation: "sessions",
+      reason: `${legacySessions.length} legacy session(s) need migration. Run 'session.ts migrate'`,
     };
   }
 

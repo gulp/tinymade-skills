@@ -325,12 +325,21 @@ bun run scripts/session.ts resume --index 2 --prompt "Continue from here"
 
 # Delete old session
 bun run scripts/session.ts delete --index 5
+
+# Migrate legacy sessions to sessionId-based tracking
+bun run scripts/session.ts migrate
 ```
 
 **Session Persistence:** All session turns automatically persist to `~/.gemini_offloader/`:
 - Full responses saved as timestamped files: `full_response-{ISO8601}.md`
 - Summary updated after each turn
 - Indexed in mem0 with session metadata (searchable via `filter-local --session`)
+- Sessions tracked by persistent **sessionId** (UUID) rather than volatile index
+
+**Session Health Status:**
+- `healthy` - Session exists in gemini-cli and can be resumed
+- `stale` - Session was purged by gemini-cli, mapping will be auto-cleaned on next use
+- `legacy` - Old index-based mapping, run `migrate` to upgrade
 
 **Output Format:**
 
@@ -338,11 +347,17 @@ Success response:
 ```json
 {
   "action": "continue",
-  "session": { "name": "wasm-research", "index": 0 },
+  "session": {
+    "type": "named",
+    "name": "wasm-research",
+    "index": 6,
+    "sessionId": "e028b0d3-80ff-4250-8fe0-84cbe6de2e77"
+  },
   "response": "Summary of response...",
   "persisted": true,
   "indexed": true,
   "turn": 3,
+  "sessionId": "e028b0d3-80ff-4250-8fe0-84cbe6de2e77",
   "success": true,
   "diagnostic": {
     "type": "success",
@@ -356,15 +371,20 @@ Error response with diagnostic:
 ```json
 {
   "success": false,
-  "error": "Session 0 no longer exists (purged by gemini-cli)",
+  "error": "Session e028b0d3... no longer exists (purged by gemini-cli)",
+  "session": {
+    "type": "named",
+    "name": "deep-dive",
+    "sessionId": "e028b0d3-80ff-4250-8fe0-84cbe6de2e77"
+  },
   "diagnostic": {
     "type": "stale_session",
-    "message": "Session index 0 ('deep-dive') was purged. Named mapping has been cleaned up.",
+    "message": "Session e028b0d3-80ff-4250-8fe0-84cbe6de2e77 ('deep-dive') was purged. Session file: /path/to/session.json",
     "suggestion": "Create a new session with 'create --name \"deep-dive\" --prompt \"...\"'"
   },
   "available_sessions": [
-    { "index": 1, "description": "Research WebAssembly for server-side" },
-    { "index": 2, "description": "Compare Wasmtime vs Wasmer" }
+    { "index": 1, "description": "Research WebAssembly...", "sessionId": "abc123..." },
+    { "index": 2, "description": "Compare Wasmtime...", "sessionId": "def456..." }
   ]
 }
 ```
