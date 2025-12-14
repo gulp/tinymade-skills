@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# initializer CLI wrapper
+# Runs the Bun CLI from any directory
+
+# Get the directory where this script lives
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_DIR="$(dirname "$SCRIPT_DIR")/cli"
+
+# Run the CLI with bun
+exec bun "$CLI_DIR/src/index.ts" "$@"

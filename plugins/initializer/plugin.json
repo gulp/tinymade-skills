@@ -1,0 +1,10 @@
+{
+  "name": "initializer",
+  "description": "Parallel agent coordination system with status reporting and monitoring TUI",
+  "version": "1.0.0",
+  "author": {
+    "name": "tinymade"
+  },
+  "keywords": ["parallel", "agents", "status", "monitoring", "worktree", "coordination"],
+  "skills": ["./skills/"]
+}
