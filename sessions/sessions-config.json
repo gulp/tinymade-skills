@@ -29,7 +29,10 @@
       "MultiEdit",
       "NotebookEdit"
     ],
-    "bash_read_patterns": [],
+    "bash_read_patterns": [
+      "bun run scripts/memory.ts",
+      "bun -e"
+    ],
     "bash_write_patterns": [],
     "extrasafe": true
   },
