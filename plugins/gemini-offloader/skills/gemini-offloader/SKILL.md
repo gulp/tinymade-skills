@@ -328,7 +328,7 @@ bun run scripts/session.ts list
 # Create named session for ongoing research
 bun run scripts/session.ts create --name "wasm-research" --prompt "Research WebAssembly for server-side"
 
-# Create with custom timeout (default: 90 seconds)
+# Create with custom timeout (default: 1800 seconds / 30 minutes)
 bun run scripts/session.ts create --name "large-ctx" --prompt "Analyze" --timeout 300
 
 # Continue named session
@@ -422,25 +422,25 @@ By default, `discover` only shows sessions from the current project directory. U
 - Sessions tracked by persistent **sessionId** (UUID) rather than volatile index
 
 **Timeout Configuration:**
-- Default timeout: 90 seconds
+- Default timeout: 1800 seconds (30 minutes) - supports warm 1M token sessions
 - Use `--timeout` or `-t` flag to override (value in seconds)
 - Applies to `create`, `continue`, and `resume` commands
 
-**When to Use Longer Timeouts (REQUIRED):**
+**When to Use Shorter Timeouts (OPTIONAL):**
 
 | Condition | Timeout |
 |-----------|---------|
-| `--include-dirs` with >10 files | `--timeout 180` |
-| `--include-dirs` with >30 files | `--timeout 300` |
-| Piping documents >5000 words | `--timeout 180` |
-| Multi-step reasoning or comparison | `--timeout 180` |
-| "Analyze entire codebase" queries | `--timeout 300` |
-| Session with accumulated context (3+ turns) | `--timeout 180` |
+| Simple factual queries | `--timeout 60` |
+| Single file analysis (<1000 lines) | `--timeout 60` |
+| Quick fact checking | `--timeout 120` |
+| Default (complex research, multi-turn sessions) | 1800s (default) |
 
-**Default 90s is appropriate for:**
-- Simple factual queries
-- Single file analysis (<1000 lines)
-- Short prompts with minimal context
+**Default 1800s (30min) is appropriate for:**
+- Complex research and analysis
+- Multi-turn sessions (3+ accumulated turns)
+- Large codebase analysis
+- Document summarization >5000 words
+- Exploratory queries with Google Search integration
 
 **Session Health Status:**
 - `healthy` - Session exists in gemini-cli and can be resumed
