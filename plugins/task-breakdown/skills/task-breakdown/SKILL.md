@@ -1,6 +1,6 @@
 ---
 name: task-breakdown
-description: Use PROACTIVELY when user says "break down this task", "create subtasks for", "decompose task into", "plan subtasks", or when a task has > 5 success criteria suggesting complexity. Auto-trigger when directory task is started without subtasks.
+description: Use PROACTIVELY when user says "break down this task", "create subtasks for", "decompose task into", "plan subtasks", "parallel breakdown", "phased breakdown", or when a task has > 5 success criteria suggesting complexity. Auto-trigger when directory task is started without subtasks. For complex tasks (> 7 criteria), suggest phased parallel breakdown.
 ---
 
 # Task Breakdown
@@ -18,6 +18,7 @@ Systematic task decomposition into cc-sessions directory structure with subtasks
 
 Execute these directly for deterministic, token-efficient operations:
 
+### Basic Breakdown
 ```bash
 # Analyze task file and extract metadata for breakdown
 bun scripts/analyze_task.ts sessions/tasks/h-implement-system.md
@@ -29,6 +30,21 @@ bun scripts/generate_subtasks.ts --parent h-implement-system --subtasks '[...]'
 bun scripts/update_indexes.ts --task h-implement-system
 ```
 
+### Parallel Phased Breakdown
+```bash
+# Analyze for phased parallel breakdown (t-shirt sizing, decomposition principle)
+bun scripts/analyze_parallel_phases.ts sessions/tasks/h-implement-system.md --json
+
+# Generate phased directory structure with specs
+bun scripts/generate_phases.ts --parent h-implement-system --phases '[...]' --with-specs
+
+# Generate spec artifacts (data-model, contracts, quickstart)
+bun scripts/generate_specs.ts sessions/tasks/h-implement-system/
+
+# Visualize dependencies (matrix + mermaid diagram)
+bun scripts/visualize_dependencies.ts sessions/tasks/h-implement-system/
+```
+
 ## Quick Decision Matrix
 
 | Request | Action |
@@ -37,6 +53,29 @@ bun scripts/update_indexes.ts --task h-implement-system
 | "create subtasks for X" | Analyze task → propose subtasks → generate files |
 | "how many subtasks?" | Run `analyze_task.ts` and count success criteria |
 | "convert to directory task" | Create directory, move file to README.md |
+| "parallel breakdown" | Run phased breakdown workflow (see below) |
+| "create phases for X" | Run `analyze_parallel_phases.ts` → propose phases → generate |
+| "visualize dependencies" | Run `visualize_dependencies.ts` on task directory |
+
+## T-Shirt Size Decision Matrix
+
+| Size | Criteria | Breakdown Type | Generate Specs | Visualize |
+|------|----------|----------------|----------------|-----------|
+| XS | 1-2 | None | No | No |
+| S | 3-4 | Simple (2-3 subtasks) | No | No |
+| M | 5-7 | Standard phases (4-6 subtasks) | Yes | No |
+| L | 8-10 | Full phases (6-8 subtasks) | Yes | Yes |
+| XL | 11+ | Multi-phase (8-12 subtasks) | Yes | Yes |
+
+## Decomposition Principles
+
+| Principle | When to Use | Phase Pattern |
+|-----------|-------------|---------------|
+| **API-First** | Full-stack projects, microservices | Sequential → Parallel → Sequential |
+| **Domain-First** | Domain-driven design, data-centric apps | Sequential → Parallel → Parallel |
+| **Infrastructure-First** | DevOps tasks, cloud deployments | Sequential → Parallel → Sequential |
+| **Test-First** | TDD/BDD projects, high-reliability systems | Parallel → Parallel → Sequential |
+| **Interface-First** | UI projects, component libraries | Sequential → Parallel → Sequential |
 
 ## Core Workflow: Task Breakdown
 
@@ -167,7 +206,7 @@ created: YYYY-MM-DD
 - **Subtasks** have `parent` field, NO `branch` field (inherit from parent)
 - All share the same branch for worktree-orchestrator compatibility
 
-### Directory Structure
+### Directory Structure (Simple Breakdown)
 ```
 sessions/tasks/h-implement-system/
 ├── README.md              ← Parent task (has branch field)
@@ -175,6 +214,250 @@ sessions/tasks/h-implement-system/
 ├── 02-phase-two.md
 └── 03-phase-three.md
 ```
+
+### Directory Structure (Phased Parallel Breakdown)
+```
+sessions/tasks/h-implement-system/
+├── README.md                           ← Parent task
+├── BREAKDOWN_OVERVIEW.md               ← Execution plan with dispatch commands
+├── specs/
+│   ├── data-model.md                   ← Shared entity schemas
+│   ├── contracts/                      ← API interface definitions
+│   │   └── main-api.md
+│   └── quickstart.md                   ← Runtime testing guidance
+├── phase_1_parallel/                   ← First phase (concurrent execution)
+│   ├── P1_1_auth-service.md
+│   └── P1_2_user-service.md
+├── phase_2_sequential/                 ← Second phase (after phase 1)
+│   └── P2_1_integration.md
+└── phase_3_parallel/                   ← Third phase (concurrent)
+    ├── P3_1_testing.md
+    └── P3_2_documentation.md
+```
+
+---
+
+## Parallel Phased Breakdown Workflow
+
+For complex tasks (L/XL size, 8+ criteria), use phased parallel breakdown to maximize concurrent execution while respecting dependencies.
+
+### Step 1: Analyze for Phased Breakdown
+
+```bash
+# Get t-shirt size, decomposition principle, and phase recommendations
+ANALYSIS=$(bun scripts/analyze_parallel_phases.ts sessions/tasks/[task-file].md --json)
+```
+
+Output includes:
+- `tshirt_size`: XS, S, M, L, or XL
+- `decomposition_principle`: api-first, domain-first, etc.
+- `recommended_phases`: Number of phases
+- `should_generate_specs`: Whether to create spec artifacts
+- `should_visualize`: Whether to generate dependency visualizations
+- `phase_structure`: Array of phase definitions with task counts
+
+### Step 2: Propose Phased Breakdown
+
+Present findings and proposal to user:
+
+```markdown
+[PREVIEW: Phased Parallel Breakdown]
+
+Parent Task: h-implement-system
+Branch: feature/system
+T-Shirt Size: L (8 criteria)
+Decomposition: API-First
+
+Proposed Phase Structure:
+
+Phase 1: Contract Definition (Sequential)
+└── P1_1_api-contracts.md
+    Define API contracts before implementation
+
+Phase 2: Implementation (Parallel)
+├── P2_1_auth-service.md [P] - JWT authentication
+├── P2_2_user-service.md [P] - User CRUD operations
+└── P2_3_data-layer.md [P] - Database access layer
+
+Phase 3: Integration (Sequential)
+└── P3_1_integration.md
+    Connect services and validate contracts
+
+Spec Artifacts:
+- specs/data-model.md - Shared entity schemas
+- specs/contracts/ - API interface definitions
+- specs/quickstart.md - Runtime testing guidance
+
+Approve this breakdown? (yes/no/revise)
+```
+
+### Step 3: Generate Phased Structure
+
+After user approval:
+
+```bash
+# Generate phased structure with specs
+bun scripts/generate_phases.ts \
+  --parent h-implement-system \
+  --with-specs \
+  --phases '[
+    {
+      "phase": 1,
+      "type": "sequential",
+      "description": "Contract Definition",
+      "tasks": [
+        {"name": "api-contracts", "objective": "...", "requirements": "...", "criteria": ["..."]}
+      ]
+    },
+    {
+      "phase": 2,
+      "type": "parallel",
+      "description": "Implementation",
+      "tasks": [
+        {"name": "auth-service", "objective": "...", "criteria": ["..."], "depends_on": ["P1_1"]},
+        {"name": "user-service", "objective": "...", "criteria": ["..."], "depends_on": ["P1_1"]},
+        {"name": "data-layer", "objective": "...", "criteria": ["..."], "depends_on": ["P1_1"]}
+      ]
+    },
+    {
+      "phase": 3,
+      "type": "sequential",
+      "description": "Integration",
+      "tasks": [
+        {"name": "integration", "objective": "...", "criteria": ["..."], "depends_on": ["P2_1", "P2_2", "P2_3"]}
+      ]
+    }
+  ]'
+```
+
+This creates:
+- Phase directories (`phase_1_sequential/`, `phase_2_parallel/`, etc.)
+- Phased subtask files with enhanced frontmatter
+- `BREAKDOWN_OVERVIEW.md` with execution plan and dispatch commands
+- `specs/` directory with templates (if `--with-specs`)
+
+### Step 4: Visualize Dependencies
+
+```bash
+# Generate dependency matrix and MermaidJS diagram
+bun scripts/visualize_dependencies.ts sessions/tasks/h-implement-system/
+```
+
+Output:
+```markdown
+## Dependency Matrix
+| Task | Phase | Depends On | Blocks | Parallel |
+|------|-------|------------|--------|----------|
+| P1_1 | 1 | - | P2_1, P2_2, P2_3 | No |
+| P2_1 | 2 | P1_1 | P3_1 | Yes |
+| P2_2 | 2 | P1_1 | P3_1 | Yes |
+| P2_3 | 2 | P1_1 | P3_1 | Yes |
+| P3_1 | 3 | P2_1, P2_2, P2_3 | - | No |
+
+## MermaidJS Diagram
+```mermaid
+graph TD
+  subgraph Phase1[Phase 1 - sequential]
+    P1_1[API Contracts]
+  end
+  subgraph Phase2[Phase 2 - parallel]
+    P2_1[Auth Service]
+    P2_2[User Service]
+    P2_3[Data Layer]
+  end
+  subgraph Phase3[Phase 3 - sequential]
+    P3_1[Integration]
+  end
+  P1_1 --> P2_1
+  P1_1 --> P2_2
+  P1_1 --> P2_3
+  P2_1 --> P3_1
+  P2_2 --> P3_1
+  P2_3 --> P3_1
+```
+
+## Phased Subtask Frontmatter
+
+Phased subtasks have enhanced frontmatter:
+
+```yaml
+---
+name: P2_1_auth-service
+parent: h-implement-system
+phase: 2
+parallel: true
+depends_on: [P1_1]
+blocks: [P3_1]
+status: pending
+created: 2025-12-14
+---
+```
+
+Fields:
+- `phase`: Phase number (1, 2, 3...)
+- `parallel`: Whether task runs concurrently with phase siblings
+- `depends_on`: Array of task IDs this depends on
+- `blocks`: Array of task IDs blocked by this task
+
+## Spec Artifacts
+
+### data-model.md
+Shared entity schemas preventing parallel tasks from implementing incompatible data structures:
+
+```markdown
+# Data Model: h-implement-system
+
+## Entities
+
+### User
+```typescript
+interface User {
+  id: string;
+  email: string;
+  name: string;
+}
+```
+
+**Used by**: P2_1, P2_2, P2_3
+```
+
+### contracts/
+API interface definitions for service boundaries:
+
+```markdown
+# API Contract: Auth Service
+
+## Endpoints
+
+### POST /auth/login
+Request: { email, password }
+Response: { token, user }
+```
+
+### quickstart.md
+Runtime testing guidance for validation:
+
+```markdown
+# Quickstart: h-implement-system
+
+## Validation Tests
+- Phase 1: Verify contracts compile
+- Phase 2: Each service starts independently
+- Phase 3: Integration tests pass
+```
+
+## Para Dispatch Integration
+
+The `BREAKDOWN_OVERVIEW.md` includes ready-to-use dispatch commands:
+
+```bash
+# Dispatch Phase 2 tasks in parallel
+para dispatch agent-p2-1 --file h-implement-system/phase_2_parallel/P2_1_auth-service.md --dangerously-skip-permissions
+para dispatch agent-p2-2 --file h-implement-system/phase_2_parallel/P2_2_user-service.md --dangerously-skip-permissions
+para dispatch agent-p2-3 --file h-implement-system/phase_2_parallel/P2_3_data-layer.md --dangerously-skip-permissions
+```
+
+---
 
 ## Integration with Worktree-Orchestrator
 
