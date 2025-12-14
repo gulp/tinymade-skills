@@ -6,10 +6,15 @@
  * Usage:
  *   bun run scripts/session.ts list
  *   bun run scripts/session.ts create --name "research-wasm" --prompt "Research WebAssembly"
+ *   bun run scripts/session.ts create --name "large-ctx" --prompt "Analyze" --timeout 300
  *   bun run scripts/session.ts continue --name "research-wasm" --prompt "Compare runtimes"
  *   bun run scripts/session.ts continue --prompt "Go deeper"  # continues latest
+ *   bun run scripts/session.ts continue --timeout 180 --prompt "Long analysis"
  *   bun run scripts/session.ts resume --index 2 --prompt "Continue from here"
  *   bun run scripts/session.ts delete --index 3
+ *
+ * Options:
+ *   --timeout, -t   Request timeout in seconds (default: 90)
  *
  * Output JSON:
  *   {
@@ -549,7 +554,7 @@ async function cmdList() {
   };
 }
 
-async function cmdContinue(args: { name?: string; index?: number; prompt: string }) {
+async function cmdContinue(args: { name?: string; index?: number; prompt: string; timeout?: number }) {
   const geminiPath = await findGemini();
   if (!geminiPath) {
     return { success: false, error: "gemini-cli not found" };
@@ -664,7 +669,8 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
     }
   }
 
-  const { response, error, exitCode, diagnostic } = await runWithSession(geminiPath, args.prompt, resume);
+  const timeoutMs = args.timeout ? args.timeout * 1000 : 90000;
+  const { response, error, exitCode, diagnostic } = await runWithSession(geminiPath, args.prompt, resume, timeoutMs);
 
   if (error) {
     return {
@@ -715,14 +721,15 @@ async function cmdContinue(args: { name?: string; index?: number; prompt: string
   };
 }
 
-async function cmdCreate(args: { name: string; prompt: string }) {
+async function cmdCreate(args: { name: string; prompt: string; timeout?: number }) {
   const geminiPath = await findGemini();
   if (!geminiPath) {
     return { success: false, error: "gemini-cli not found" };
   }
 
   // Run initial query (creates new session)
-  const { response, error, exitCode, diagnostic } = await runWithSession(geminiPath, args.prompt);
+  const timeoutMs = args.timeout ? args.timeout * 1000 : 90000;
+  const { response, error, exitCode, diagnostic } = await runWithSession(geminiPath, args.prompt, undefined, timeoutMs);
 
   if (error) {
     return {
@@ -965,6 +972,8 @@ async function main() {
         opts.prompt = args[++i];
       } else if (args[i] === "--index" || args[i] === "-i") {
         opts.index = parseInt(args[++i]);
+      } else if (args[i] === "--timeout" || args[i] === "-t") {
+        opts.timeout = parseInt(args[++i]);
       }
     }
     return opts;
@@ -981,7 +990,11 @@ async function main() {
       if (!opts.name || !opts.prompt) {
         result = { success: false, error: "create requires --name and --prompt" };
       } else {
-        result = await cmdCreate({ name: opts.name as string, prompt: opts.prompt as string });
+        result = await cmdCreate({
+          name: opts.name as string,
+          prompt: opts.prompt as string,
+          timeout: opts.timeout as number | undefined
+        });
       }
       break;
     case "continue":
@@ -991,7 +1004,8 @@ async function main() {
         result = await cmdContinue({
           name: opts.name as string | undefined,
           index: opts.index as number | undefined,
-          prompt: opts.prompt as string
+          prompt: opts.prompt as string,
+          timeout: opts.timeout as number | undefined
         });
       }
       break;
@@ -999,7 +1013,11 @@ async function main() {
       if (opts.index === undefined || !opts.prompt) {
         result = { success: false, error: "resume requires --index and --prompt" };
       } else {
-        result = await cmdContinue({ index: opts.index as number, prompt: opts.prompt as string });
+        result = await cmdContinue({
+          index: opts.index as number,
+          prompt: opts.prompt as string,
+          timeout: opts.timeout as number | undefined
+        });
       }
       break;
     case "delete":
