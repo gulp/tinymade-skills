@@ -14,6 +14,7 @@ Tasks for building and maintaining Claude Code skills and plugins - development 
 - `h-implement-gemini-offloader-state-persistence/` - State persistence layer for gemini-offloader with filesystem cache, mem0 integration, and cross-session discovery
 
 ### Medium Priority
+- `m-fix-initializer-critical-issues.md` - Fix critical issues in parallel agent coordination system (race condition, cleanup integration)
 - `m-implement-gemini-context-offloading-skill.md` - Original gemini-offloader skill implementation
 - `m-implement-skills-marketplace.md` - Skills marketplace infrastructure
 
