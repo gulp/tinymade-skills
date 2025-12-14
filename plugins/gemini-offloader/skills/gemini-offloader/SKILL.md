@@ -1,6 +1,6 @@
 ---
 name: gemini-offloader
-description: Offload context-heavy tasks to Google Gemini via gemini-cli with warm session support and persistent vector memory. Use when user requests research with web search, large document summarization, multi-turn research sessions, or exploratory searches that would pollute Claude's context. Triggers include "ask Gemini", "offload to Gemini", "Gemini search", "research with Gemini", "continue Gemini session", "remember this research", or any request explicitly delegating work to Gemini. Also use proactively when a task would benefit from Gemini's 1M token context, Google Search grounding, or when building on previous research. **TIMEOUT:** Default 1800s (30min) supports complex research. For timely queries use `--timeout 60` or `--timeout 120`.
+description: Offload context-heavy tasks to Google Gemini via gemini-cli with warm session support and persistent vector memory. Use when user requests research with web search, large document summarization, multi-turn research sessions, or exploratory searches that would pollute Claude's context. Triggers include "ask Gemini", "offload to Gemini", "Gemini search", "research with Gemini", "continue Gemini session", "remember this research", or any request explicitly delegating work to Gemini. Also use proactively when a task would benefit from Gemini's 1M token context, Google Search grounding, or when building on previous research. **TIMEOUT:** For complex queries use `--timeout 180` (3min) or `--timeout 300` (5min) - default 90s is only for simple queries.
 ---
 
 # Gemini Context Offloader
@@ -41,19 +41,18 @@ Options:
 - Include local files? [Yes - ask which dirs / No]
 - Skip cache (force fresh)? [Yes / No]
 - Save full output to file? [Yes - ask filename / No]
-- Extended timeout? [No (1800s default) / Yes - 60s / Yes - 300s]
+- Extended timeout? [No (90s default) / Yes - 3 min / Yes - 5 min]
 ```
 
 **TIMEOUT INFERENCE (REQUIRED):** Before asking about timeout, evaluate complexity:
 | If prompt contains... | Auto-select timeout |
 |----------------------|---------------------|
-| "comprehensive", "analyze entire", "deep dive" | Use default 1800s |
-| "all files", "entire codebase", "everything" | Use default 1800s |
-| `--include-dirs` with multiple paths | Use default 1800s |
-| Session continuation (3+ turns) | Use default 1800s |
-| Quick fact check or simple query | `--timeout 60` or `--timeout 120` |
+| "comprehensive", "analyze entire", "deep dive" | `--timeout 180` |
+| "all files", "entire codebase", "everything" | `--timeout 300` |
+| `--include-dirs` with multiple paths | `--timeout 180` |
+| Session continuation (3+ turns) | `--timeout 180` |
 
-For timely tasks, override with `--timeout 60` or `--timeout 120`. Default 1800s (30min) already handles complex research.
+If auto-selected, INFORM the user: "Using extended timeout (180s) for this comprehensive query."
 
 **If "Manage research sessions":**
 ```
@@ -65,7 +64,7 @@ Options:
 - Delete a session [show available sessions]
 ```
 
-**SESSION TIMEOUT (REQUIRED):** For create/continue, use default 1800s (30min) which supports warm 1M token sessions. For quick follow-ups, override with `--timeout 60` or `--timeout 120`.
+**SESSION TIMEOUT (REQUIRED):** For create/continue, apply the same timeout inference as research queries. Sessions with 3+ accumulated turns should ALWAYS use `--timeout 180` minimum.
 
 **If "Search past research":**
 ```
@@ -328,7 +327,7 @@ bun run scripts/session.ts list
 # Create named session for ongoing research
 bun run scripts/session.ts create --name "wasm-research" --prompt "Research WebAssembly for server-side"
 
-# Create with custom timeout (default: 1800 seconds / 30 minutes)
+# Create with custom timeout (default: 90 seconds)
 bun run scripts/session.ts create --name "large-ctx" --prompt "Analyze" --timeout 300
 
 # Continue named session
@@ -422,25 +421,25 @@ By default, `discover` only shows sessions from the current project directory. U
 - Sessions tracked by persistent **sessionId** (UUID) rather than volatile index
 
 **Timeout Configuration:**
-- Default timeout: 1800 seconds (30 minutes) - supports warm 1M token sessions
+- Default timeout: 90 seconds
 - Use `--timeout` or `-t` flag to override (value in seconds)
 - Applies to `create`, `continue`, and `resume` commands
 
-**When to Use Shorter Timeouts (OPTIONAL):**
+**When to Use Longer Timeouts (REQUIRED):**
 
 | Condition | Timeout |
 |-----------|---------|
-| Simple factual queries | `--timeout 60` |
-| Single file analysis (<1000 lines) | `--timeout 60` |
-| Quick fact checking | `--timeout 120` |
-| Default (complex research, multi-turn sessions) | 1800s (default) |
+| `--include-dirs` with >10 files | `--timeout 180` |
+| `--include-dirs` with >30 files | `--timeout 300` |
+| Piping documents >5000 words | `--timeout 180` |
+| Multi-step reasoning or comparison | `--timeout 180` |
+| "Analyze entire codebase" queries | `--timeout 300` |
+| Session with accumulated context (3+ turns) | `--timeout 180` |
 
-**Default 1800s (30min) is appropriate for:**
-- Complex research and analysis
-- Multi-turn sessions (3+ accumulated turns)
-- Large codebase analysis
-- Document summarization >5000 words
-- Exploratory queries with Google Search integration
+**Default 90s is appropriate for:**
+- Simple factual queries
+- Single file analysis (<1000 lines)
+- Short prompts with minimal context
 
 **Session Health Status:**
 - `healthy` - Session exists in gemini-cli and can be resumed
