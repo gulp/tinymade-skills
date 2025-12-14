@@ -3,6 +3,9 @@
  * Manage warm gemini sessions for context preservation.
  * Supports listing, resuming, continuing, and deleting sessions.
  *
+ * All session turns are automatically persisted to ~/.gemini_offloader/ and
+ * indexed in mem0 for semantic search.
+ *
  * Usage:
  *   bun run scripts/session.ts list
  *   bun run scripts/session.ts create --name "research-wasm" --prompt "Research WebAssembly"
@@ -15,6 +18,7 @@
  *
  * Options:
  *   --timeout, -t   Request timeout in seconds (default: 90)
+ *                   Useful for complex research queries or large context operations
  *
  * Output JSON:
  *   {

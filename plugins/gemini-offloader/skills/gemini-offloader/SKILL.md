@@ -314,8 +314,14 @@ bun run scripts/session.ts list
 # Create named session for ongoing research
 bun run scripts/session.ts create --name "wasm-research" --prompt "Research WebAssembly for server-side"
 
+# Create with custom timeout (default: 90 seconds)
+bun run scripts/session.ts create --name "large-ctx" --prompt "Analyze" --timeout 300
+
 # Continue named session
 bun run scripts/session.ts continue --name "wasm-research" --prompt "Compare Wasmtime vs Wasmer"
+
+# Continue with custom timeout
+bun run scripts/session.ts continue --timeout 180 --prompt "Long analysis"
 
 # Continue latest session
 bun run scripts/session.ts continue --prompt "Go deeper on performance"
@@ -335,6 +341,12 @@ bun run scripts/session.ts migrate
 - Summary updated after each turn
 - Indexed in mem0 with session metadata (searchable via `filter-local --session`)
 - Sessions tracked by persistent **sessionId** (UUID) rather than volatile index
+
+**Timeout Configuration:**
+- Default timeout: 90 seconds
+- Use `--timeout` or `-t` flag to override (value in seconds)
+- Applies to `create`, `continue`, and `resume` commands
+- Useful for complex research queries or large context operations
 
 **Session Health Status:**
 - `healthy` - Session exists in gemini-cli and can be resumed
@@ -425,6 +437,28 @@ bun run scripts/memory.ts get --user "research"
 - **Local mode**: Uses mem0ai/oss with Groq LLM + Ollama embeddings (requires GROQ_API_KEY)
 - Both modes provide semantic search and vector memory
 - Local index always maintained as fallback
+
+**Entity Scoping Model:**
+
+mem0 requires each memory to belong to exactly ONE entity space for reliable querying. The skill uses this scoping:
+
+- **Project memories**: `user_id=project_hash` only (queryable per-project)
+- **Session memories**: `user_id=project_hash` + `run_id=session_name` (queryable per-session)
+- **Agent memories**: `user_id="gemini-offloader"` (cross-project agent knowledge)
+
+IMPORTANT: Do NOT combine `agent_id + user_id` in the same memory - this creates unretrievable memories because mem0 queries one entity space at a time. Each memory must have a single entity scope.
+
+Query patterns:
+```bash
+# Project scope: Search all memories for current project
+bun run scripts/memory.ts search-scoped --scope project --project "abc123" --query "patterns"
+
+# Session scope: Search memories for specific session
+bun run scripts/memory.ts search-scoped --scope session --project "abc123" --session "research-1" --query "findings"
+
+# Agent scope: Search cross-project agent knowledge
+bun run scripts/memory.ts search-scoped --scope agent --query "best practices"
+```
 
 ### Filter Past Research
 ```bash

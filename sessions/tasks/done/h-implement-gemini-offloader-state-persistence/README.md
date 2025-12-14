@@ -1,8 +1,9 @@
 ---
 name: h-implement-gemini-offloader-state-persistence
 branch: feature/gemini-offloader-state-persistence
-status: in_progress
+status: completed
 created: 2024-12-13
+completed: 2025-12-14
 ---
 
 # Implement Gemini Offloader State Persistence
@@ -519,9 +520,25 @@ getAll(config: {userId, ...})
 #### Discovered
 - **Plugin cache invalidation required for SKILL.md updates**: Claude Code caches SKILL.md from master branch. Development workflow requires committing changes to master and clearing plugin cache (`rm -rf ~/.config/claude-code/plugin-cache`) before Claude sees updates.
 
+### 2025-12-14 (Session 2)
+
+#### Completed
+- **Fixed critical bugs from code review**:
+  - Implemented `checkMem0Available()` in sync.ts (was causing crashes in check/stats commands)
+  - Exported `getMemory()` from memory.ts for use by sync.ts
+- **Enhanced session.ts**:
+  - Added `--timeout/-t` flag for configurable timeout (default 90s)
+- **Verified mem0 entity scoping model**:
+  - Confirmed single entity space approach (user_id only, or user_id + run_id for sessions)
+  - Documented constraint: never combine agent_id + user_id (creates unreachable entity spaces)
+
+#### Decisions
+- Entity scoping model: Project scope uses `user_id` only; session scope uses `user_id + run_id` (still single entity space)
+- Default timeout remains 90s, configurable via flag for edge cases
+
 ## Subtasks
 
-### `subtask-session-id-tracking.md` (pending)
+### `subtask-session-id-tracking.md` (completed)
 
 **Problem:** Session management uses volatile indices from `gemini --list-sessions`, but gemini-cli assigns persistent UUIDs. When sessions are purged, indices shift and our mappings become invalid.
 

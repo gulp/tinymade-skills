@@ -2,6 +2,9 @@
 /**
  * Sync filesystem state with mem0 index.
  *
+ * This script delegates mem0 operations to memory.ts via indexOffload(),
+ * which properly handles both hosted and local mem0 modes.
+ *
  * Usage:
  *   bun run scripts/sync.ts rebuild    # Re-index all files into mem0
  *   bun run scripts/sync.ts prune      # Remove orphaned mem0 entries
@@ -30,7 +33,15 @@ import {
   type SessionMetadata,
   type OffloadMetadata
 } from "./state";
-import { indexOffload } from "./memory";
+import { indexOffload, getMemory } from "./memory";
+
+/**
+ * Check if mem0 is available for operations.
+ */
+async function checkMem0Available(): Promise<boolean> {
+  const { memory, error } = await getMemory();
+  return !error && memory !== null;
+}
 
 interface SyncResult {
   success: boolean;

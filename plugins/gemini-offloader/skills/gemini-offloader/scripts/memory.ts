@@ -4,12 +4,16 @@
  * Stores research findings, summaries, and key insights in vector store.
  *
  * Enhanced with full OffloadMetadata schema, local index fallback,
- * and entity-scoped memory model (agent_id, user_id, run_id).
+ * and entity-scoped memory model.
  *
- * Entity Model (mem0 best practices):
- *   - agent_id: "gemini-offloader" - Agent's accumulated knowledge (cross-project)
- *   - user_id: project_hash - Project-specific context
- *   - run_id: session_name - Short-lived session context (if applicable)
+ * Entity Scoping Model (mem0 constraint: ONE entity space per memory):
+ *   - Project memories: user_id=project_hash only (queryable per-project)
+ *   - Session memories: user_id=project_hash + run_id=session_name (queryable per-session)
+ *   - Agent memories: user_id="gemini-offloader" (cross-project knowledge)
+ *
+ * IMPORTANT: Do NOT combine agent_id + user_id in the same memory.
+ * mem0 queries ONE entity space at a time. Combining entities creates
+ * unretrievable memories.
  *
  * Prerequisites:
  *   bun add mem0ai
@@ -117,7 +121,14 @@ async function getLocalMemoryConfig() {
   };
 }
 
-async function getMemory(): Promise<{ memory: any; error: string | null; mode: "hosted" | "local" }> {
+/**
+ * Get mem0 memory instance with proper mode handling.
+ * Exported for use by other scripts (e.g., sync.ts).
+ *
+ * Returns cached instance if mode hasn't changed.
+ * Dispatches to hosted or local mode based on config.
+ */
+export async function getMemory(): Promise<{ memory: any; error: string | null; mode: "hosted" | "local" }> {
   const mode = await getMem0Mode();
 
   // Return cached instance if mode matches
