@@ -77,6 +77,7 @@ function getSessionIndex(mapping: number | SessionMapping): number | null {
 interface SessionInfo {
   index: number;
   description: string;
+  sessionId?: string;  // Extracted from [uuid] in description
   name?: string;
 }
 
@@ -125,19 +126,32 @@ async function findGemini(): Promise<string | null> {
 
 async function listSessions(geminiPath: string): Promise<SessionInfo[]> {
   try {
-    const result = await $`${geminiPath} --list-sessions`.text();
+    // Use Bun.spawn with inherit stdin and read stderr (gemini writes list to stderr)
+    const proc = Bun.spawn([geminiPath, "--list-sessions"], {
+      stdin: "inherit",
+      stdout: "pipe",
+      stderr: "pipe"
+    });
 
-    if (result.includes("No previous sessions")) {
+    // gemini-cli writes session list to stderr, not stdout
+    const stderr = await new Response(proc.stderr).text();
+    await proc.exited;
+
+    if (stderr.includes("No previous sessions")) {
       return [];
     }
 
     const sessions: SessionInfo[] = [];
-    for (const line of result.split("\n")) {
+    for (const line of stderr.split("\n")) {
       const match = line.match(/(\d+)[:\.\s]+(.+)/);
       if (match) {
+        const description = match[2].trim();
+        // Extract sessionId from [uuid] at end of description
+        const uuidMatch = description.match(/\[([a-f0-9-]{36})\]$/);
         sessions.push({
           index: parseInt(match[1]),
-          description: match[2].trim()
+          description,
+          sessionId: uuidMatch ? uuidMatch[1] : undefined
         });
       }
     }
@@ -165,13 +179,12 @@ async function verifySession(geminiPath: string, index: number): Promise<{
 }
 
 /**
- * Resolve a sessionId to its current index by matching session files.
+ * Resolve a sessionId to its current index.
  *
  * This is the key function for persistent session tracking:
- * 1. Get list of sessions from gemini --list-sessions
- * 2. For each session index, find its session file
- * 3. Parse the session file to get sessionId
- * 4. Return matching index
+ * 1. Get list of sessions from gemini --list-sessions (includes sessionId in output)
+ * 2. Find the session with matching sessionId
+ * 3. Return its current index
  *
  * Returns null if session not found (purged by gemini-cli)
  */
@@ -180,36 +193,19 @@ async function sessionIdToIndex(
   geminiProjectHash: string,
   geminiPath: string
 ): Promise<{ index: number; sessionFile: string } | null> {
-  // Get all session files from gemini's storage
-  const sessionFiles = await listGeminiSessionFiles(geminiProjectHash);
+  // Get sessions from gemini (includes sessionId in output)
+  const sessions = await listSessions(geminiPath);
 
-  if (sessionFiles.length === 0) {
-    return null;
-  }
+  // Find session with matching sessionId
+  const session = sessions.find(s => s.sessionId === sessionId);
 
-  // Find the session with matching sessionId
-  for (const { path, parsed } of sessionFiles) {
-    if (parsed.sessionId === sessionId) {
-      // Now we need to find what index gemini-cli assigns to this session
-      // gemini --list-sessions shows sessions in a specific order
-      // The order matches the file listing (most recent first = index 0)
-      const sessions = await listSessions(geminiPath);
-
-      // Map session files to their indices
-      // gemini-cli lists sessions newest-first, matching our listGeminiSessionFiles order
-      const sessionFileIndex = sessionFiles.findIndex(s => s.parsed.sessionId === sessionId);
-
-      if (sessionFileIndex !== -1 && sessionFileIndex < sessions.length) {
-        return {
-          index: sessions[sessionFileIndex].index,
-          sessionFile: path
-        };
-      }
-
-      // Fallback: session file exists but not in --list-sessions
-      // This can happen if gemini-cli has internal limits
-      return null;
-    }
+  if (session) {
+    // Find the session file path for this sessionId
+    const sessionFile = await findSessionFile(sessionId, geminiProjectHash);
+    return {
+      index: session.index,
+      sessionFile: sessionFile || `unknown-${sessionId}`
+    };
   }
 
   return null;
