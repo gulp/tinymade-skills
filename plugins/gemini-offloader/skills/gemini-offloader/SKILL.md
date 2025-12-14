@@ -1,6 +1,6 @@
 ---
 name: gemini-offloader
-description: Offload context-heavy tasks to Google Gemini via gemini-cli with warm session support and persistent vector memory. Use when user requests research with web search, large document summarization, multi-turn research sessions, or exploratory searches that would pollute Claude's context. Triggers include "ask Gemini", "offload to Gemini", "Gemini search", "research with Gemini", "continue Gemini session", "remember this research", or any request explicitly delegating work to Gemini. Also use proactively when a task would benefit from Gemini's 1M token context, Google Search grounding, or when building on previous research.
+description: Offload context-heavy tasks to Google Gemini via gemini-cli with warm session support and persistent vector memory. Use when user requests research with web search, large document summarization, multi-turn research sessions, or exploratory searches that would pollute Claude's context. Triggers include "ask Gemini", "offload to Gemini", "Gemini search", "research with Gemini", "continue Gemini session", "remember this research", or any request explicitly delegating work to Gemini. Also use proactively when a task would benefit from Gemini's 1M token context, Google Search grounding, or when building on previous research. **TIMEOUT:** For complex queries use `--timeout 180` (3min) or `--timeout 300` (5min) - default 90s is only for simple queries.
 ---
 
 # Gemini Context Offloader
@@ -41,17 +41,30 @@ Options:
 - Include local files? [Yes - ask which dirs / No]
 - Skip cache (force fresh)? [Yes / No]
 - Save full output to file? [Yes - ask filename / No]
+- Extended timeout? [No (90s default) / Yes - 3 min / Yes - 5 min]
 ```
+
+**TIMEOUT INFERENCE (REQUIRED):** Before asking about timeout, evaluate complexity:
+| If prompt contains... | Auto-select timeout |
+|----------------------|---------------------|
+| "comprehensive", "analyze entire", "deep dive" | `--timeout 180` |
+| "all files", "entire codebase", "everything" | `--timeout 300` |
+| `--include-dirs` with multiple paths | `--timeout 180` |
+| Session continuation (3+ turns) | `--timeout 180` |
+
+If auto-selected, INFORM the user: "Using extended timeout (180s) for this comprehensive query."
 
 **If "Manage research sessions":**
 ```
 "Which session action?"
 Options:
 - List existing sessions
-- Create new session [ask: session name, initial prompt]
+- Create new session [ask: session name, initial prompt, timeout if complex]
 - Continue existing session [show available sessions from launcher output]
 - Delete a session [show available sessions]
 ```
+
+**SESSION TIMEOUT (REQUIRED):** For create/continue, apply the same timeout inference as research queries. Sessions with 3+ accumulated turns should ALWAYS use `--timeout 180` minimum.
 
 **If "Search past research":**
 ```

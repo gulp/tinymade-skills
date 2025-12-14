@@ -1190,24 +1190,49 @@ async function main() {
     process.exit(1);
   }
 
-  // Parse remaining args
+  // Parse remaining args - supports both "--flag value" and "--flag=value" formats
   const parseOptions = (args: string[]) => {
     const opts: Record<string, string | number | boolean> = {};
+
+    const parseArg = (arg: string, nextArg: string | undefined): { value: string; consumedNext: boolean } => {
+      if (arg.includes("=")) {
+        return { value: arg.split("=")[1], consumedNext: false };
+      }
+      return { value: nextArg || "", consumedNext: true };
+    };
+
     for (let i = 0; i < args.length; i++) {
-      if (args[i] === "--name" || args[i] === "-n") {
-        opts.name = args[++i];
-      } else if (args[i] === "--prompt" || args[i] === "-p") {
-        opts.prompt = args[++i];
-      } else if (args[i] === "--index" || args[i] === "-i") {
-        opts.index = parseInt(args[++i]);
-      } else if (args[i] === "--timeout" || args[i] === "-t") {
-        opts.timeout = parseInt(args[++i]);
-      } else if (args[i] === "--all-projects" || args[i] === "-a") {
+      const arg = args[i];
+      const flagName = arg.split("=")[0]; // Handle --flag=value format
+
+      if (flagName === "--name" || flagName === "-n") {
+        const { value, consumedNext } = parseArg(arg, args[i + 1]);
+        opts.name = value;
+        if (consumedNext) i++;
+      } else if (flagName === "--prompt" || flagName === "-p") {
+        const { value, consumedNext } = parseArg(arg, args[i + 1]);
+        opts.prompt = value;
+        if (consumedNext) i++;
+      } else if (flagName === "--index" || flagName === "-i") {
+        const { value, consumedNext } = parseArg(arg, args[i + 1]);
+        const parsed = parseInt(value, 10);
+        if (!isNaN(parsed)) opts.index = parsed;
+        if (consumedNext) i++;
+      } else if (flagName === "--timeout" || flagName === "-t") {
+        const { value, consumedNext } = parseArg(arg, args[i + 1]);
+        const parsed = parseInt(value, 10);
+        if (!isNaN(parsed) && parsed > 0) opts.timeout = parsed;
+        if (consumedNext) i++;
+      } else if (flagName === "--all-projects" || flagName === "-a") {
         opts.allProjects = true;
-      } else if (args[i] === "--session-id" || args[i] === "-s") {
-        opts.sessionId = args[++i];
-      } else if (args[i] === "--project-hash") {
-        opts.projectHash = args[++i];
+      } else if (flagName === "--session-id" || flagName === "-s") {
+        const { value, consumedNext } = parseArg(arg, args[i + 1]);
+        opts.sessionId = value;
+        if (consumedNext) i++;
+      } else if (flagName === "--project-hash") {
+        const { value, consumedNext } = parseArg(arg, args[i + 1]);
+        opts.projectHash = value;
+        if (consumedNext) i++;
       }
     }
     return opts;
