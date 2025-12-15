@@ -539,7 +539,30 @@ Tests will use `Bun.spawn()` to invoke these commands programmatically.
 - `docs/prd-claude-code-agent-testing.md` - Full PRD with architecture and implementation details
 
 ## User Notes
-<!-- Any specific notes or requirements from the developer -->
+
+### Design Decision: AgentEvals vs Judgeval
+
+These are **orthogonal** — they evaluate different things:
+
+| | AgentEvals | Judgeval |
+|---|---|---|
+| **Evaluates** | Tool behavior (structural) | Output quality (semantic) |
+| **Method** | Deterministic trajectory matching | LLM-as-judge |
+| **API cost** | None | Yes (judge LLM calls) |
+
+**Implementation approach:**
+- AgentEvals = core, always runs (local-first, free)
+- Judgeval = optional, gated behind `EVAL_LLM_JUDGE=1` flag
+
+```typescript
+const USE_LLM_JUDGE = process.env.EVAL_LLM_JUDGE === "1";
+const scorers = [
+  trajectoryMatchScorer,  // Always
+  ...(USE_LLM_JUDGE ? [answerRelevancyScorer] : []),
+];
+```
+
+This respects the "minimize API costs" constraint while allowing semantic scoring when needed (CI, release validation).
 
 ## Work Log
 <!-- Updated as work progresses -->
