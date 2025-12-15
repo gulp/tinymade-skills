@@ -1,7 +1,7 @@
 ---
 name: h-implement-bun-eval-suite
 branch: feature/implement-bun-eval-suite
-status: pending
+status: in-progress
 created: 2025-12-15
 ---
 
@@ -14,7 +14,7 @@ When developing Claude Code skills and multi-agent workflows, there's no systema
 This task implements a local testing framework using Bun's native test runner (`bun:test`) combined with Claude Code's hook system and AgentEvals for trajectory matching.
 
 ## Success Criteria
-- [ ] Tool call capture via PreToolUse/PostToolUse hooks writes to JSONL
+- [x] Tool call capture via PreToolUse/PostToolUse hooks writes to JSONL
 - [ ] Custom `describeEval` wrapper provides vitest-evals-like API for bun:test
 - [ ] AgentEvals `createTrajectoryMatchEvaluator` integration validates tool sequences
 - [ ] VCR cassette recording enables deterministic replay without API calls
@@ -22,11 +22,20 @@ This task implements a local testing framework using Bun's native test runner (`
 
 ## Subtasks
 
+### Core Infrastructure
 1. `01-hooks-tool-capture.md` - Claude Code hooks + JSONL capture
 2. `02-bun-evals-wrapper.md` - `describeEval` API for bun:test
 3. `03-agentevals-integration.md` - Trajectory matching evaluators
 4. `04-vcr-cassette-replay.md` - Deterministic test replay
 5. `05-parallel-worktree-isolation.md` - Multi-worktree test isolation
+
+### Gemini-Offloader Test Suite (Reference Implementation)
+6. `06-gemini-offloader-unit-tests.md` - Layer 1: Direct CLI script testing
+7. `07-gemini-offloader-skill-invocation.md` - Layer 2: Claude skill invocation tests
+8. `08-gemini-offloader-e2e-workflow.md` - Layer 3: End-to-end workflow tests
+
+### Observability Infrastructure
+9. `09-langfuse-observability.md` - Migrate from Judgeval to self-hosted Langfuse
 
 ## Context Manifest
 
@@ -564,6 +573,80 @@ const scorers = [
 
 This respects the "minimize API costs" constraint while allowing semantic scoring when needed (CI, release validation).
 
+
+### Discovered During Implementation
+[Date: 2025-12-15 / Initial hook infrastructure implementation]
+
+During the first implementation session, we discovered two critical technical constraints that weren't documented in the original research:
+
+**Claude Code SDK Types Are Not Available on npm**
+
+The original plan referenced `@anthropic-ai/claude-code-sdk` as a dependency for hook type definitions (PreToolUseHookInput, PostToolUseHookInput). However, this package does not exist on npm. The search revealed that while `@anthropic-ai/claude-code` exists (the CLI itself), it doesn't export type definitions for the hook protocol.
+
+The actual behavior: Hook scripts receive JSON via stdin following a protocol defined by Claude Code, but there's no published TypeScript package providing these types. We had to define them locally based on the JSON structure documented in the hook protocol.
+
+**Solution implemented**: Added local type definitions in `plugins/agent-evals/scripts/common.ts`:
+```typescript
+export interface PreToolUseHookInput {
+  tool_name: string;
+  tool_input: unknown;
+  tool_use_id: string;
+  session_id: string;
+  cwd: string;
+}
+
+export interface PostToolUseHookInput extends PreToolUseHookInput {
+  tool_response: unknown;
+}
+```
+
+Future implementations should define hook types locally rather than attempting to install an SDK dependency.
+
+**Bun.write() Does Not Support Append Mode**
+
+The Bun documentation and examples show `Bun.write()` as the preferred file I/O API, and we initially implemented JSONL appending using `Bun.write(path, data, { append: true })`. TypeScript compilation succeeded (the signature appears valid), but the actual Bun runtime doesn't support the `append` option.
+
+The actual behavior: `Bun.write()` only supports writing entire files, not appending. Attempting to use `{ append: true }` is silently ignored or produces TypeScript errors depending on the Bun version.
+
+**Solution implemented**: Use Node.js `appendFile` from `fs/promises` instead:
+```typescript
+import { appendFile } from "node:fs/promises";
+await appendFile(outputPath, line, "utf-8");
+```
+
+This works reliably in Bun (which has full Node.js API compatibility) and is the correct approach for JSONL append operations. Future implementations should use Node.js fs APIs for append operations even when running under Bun.
+
 ## Work Log
-<!-- Updated as work progresses -->
-- [2025-12-15] Task created from PRD
+
+### 2025-12-15
+
+#### Completed
+- Implemented hook infrastructure (`plugins/agent-evals/scripts/`):
+  - `capture-tool.ts` - PreToolUse hook writes JSONL when `TEST_MODE=true`
+  - `log-result.ts` - PostToolUse hook captures tool outputs
+  - `common.ts` - Shared utilities with local TypeScript types for `PreToolUseHookInput`/`PostToolUseHookInput`
+- Fixed `common.ts` to use `appendFile` from `fs/promises` instead of `Bun.write` for JSONL append
+- Created test harness (`plugins/agent-evals/tests/lib/harness.ts`):
+  - `runAgent()` - Spawns Claude subprocess with `TEST_MODE=true` and `TEST_RUN_ID`
+  - `getToolCalls()` - Parses JSONL output with timestamp sorting
+  - `getToolSequence()` - Extracts tool names for trajectory matching
+  - `generateTestId()` - Creates unique test IDs with timestamp
+- Added `test-output/` to `.gitignore`
+- Created comprehensive `README.md` quickstart documentation with:
+  - Architecture diagrams showing test flow
+  - Step-by-step walkthrough for file search agent testing
+  - Concrete use cases (tool selection validation, trajectory matching)
+- Created three gemini-offloader test subtasks:
+  - `06-gemini-offloader-unit-tests.md` - Layer 1: Direct CLI script testing
+  - `07-gemini-offloader-skill-invocation.md` - Layer 2: Agent skill invocation tests
+  - `08-gemini-offloader-e2e-workflow.md` - Layer 3: End-to-end workflow testing
+
+#### Decisions
+- Removed SDK dependency (`@anthropic-ai/claude-code-sdk` doesn't exist on npm) - defined hook types locally
+- Used `appendFile` from Node.js `fs/promises` for JSONL writing (Bun.write doesn't support append mode)
+- Hook infrastructure compiles and type-checks cleanly with TypeScript strict mode
+- Three-layer testing approach for gemini-offloader (unit → skill invocation → e2e workflow)
+
+#### Next Steps
+- Implement subtasks 02-05: bun-evals wrapper, AgentEvals integration, VCR cassettes, parallel isolation
+- Begin gemini-offloader test suite implementation (subtasks 06-08)
