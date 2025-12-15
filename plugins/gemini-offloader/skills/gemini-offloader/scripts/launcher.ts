@@ -134,9 +134,9 @@ async function checkAuthentication(): Promise<{ authenticated: boolean; method: 
     return { authenticated: true, method: "api_key" };
   }
 
-  // Check for OAuth tokens
-  const configDir = join(homedir(), ".config", "gemini-cli");
-  const tokenFile = join(configDir, "oauth_tokens.json");
+  // Check for OAuth tokens (gemini CLI stores at ~/.gemini/oauth_creds.json)
+  const geminiDir = join(homedir(), ".gemini");
+  const tokenFile = join(geminiDir, "oauth_creds.json");
 
   if (existsSync(tokenFile)) {
     try {
