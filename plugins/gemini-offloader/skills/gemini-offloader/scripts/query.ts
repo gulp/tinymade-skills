@@ -27,20 +27,21 @@
  *   }
  */
 
-import { Judgeval, NodeTracer } from "judgeval";
+import { Judgeval, NodeTracer, Example } from "judgeval";
 
-// Initialize Judgment Labs tracing
+// Initialize Judgment Labs tracing and evaluation
 const tracingEnabled = !!(process.env.JUDGMENT_ORG_ID && process.env.JUDGMENT_API_KEY);
 let tracer: NodeTracer | null = null;
+let judgevalClient: ReturnType<typeof Judgeval.create> | null = null;
 
 async function initTracer(): Promise<NodeTracer | null> {
   if (!tracingEnabled) return null;
   try {
-    const judgeval = Judgeval.create({
+    judgevalClient = Judgeval.create({
       organizationId: process.env.JUDGMENT_ORG_ID!,
       apiKey: process.env.JUDGMENT_API_KEY!,
     });
-    const t = await judgeval.nodeTracer.create({
+    const t = await judgevalClient.nodeTracer.create({
       projectName: "tinymade-skills-gemini-offloader",
     });
     await t.initialize();
@@ -310,6 +311,17 @@ async function runQuery(args: {
             "gemini.token_count": tokenCount,
             "gemini.model_used": responseModel || "unknown",
           });
+
+          // Evaluate response quality (async, non-blocking)
+          if (judgevalClient) {
+            tracer.asyncEvaluate(
+              judgevalClient.scorers.builtIn.answerRelevancy(),
+              Example.create({
+                input: args.prompt,
+                actual_output: summary,
+              }),
+            );
+          }
         }
 
         const result: QueryResult = {
