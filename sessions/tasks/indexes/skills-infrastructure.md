@@ -22,6 +22,7 @@ Tasks for building and maintaining Claude Code skills and plugins - development 
 ### Low Priority
 
 ### Investigate
+- `?-research-claude-skills-patterns.md` - Research Claude Code skills/hooks patterns from egghead.io sources
 
 ## Completed Tasks
 - `m-fix-initializer-critical-issues.md` - Fix critical issues in parallel agent coordination system (race condition, cleanup integration)
