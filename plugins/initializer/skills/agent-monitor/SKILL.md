@@ -124,6 +124,16 @@ claude
 }
 ```
 
+## System Reliability
+
+The monitoring system automatically handles edge cases:
+
+- **Orphaned temp files**: Cleaned up silently when `show` or `monitor` commands run
+- **Corrupted status files**: Skipped gracefully (logged but don't crash the monitor)
+- **Missing git repository**: Diff stats return null (status reporting continues)
+- **Concurrent writes**: Atomic rename pattern prevents corruption when agents report simultaneously
+- **Stale agents**: Detected when no update received in >2 hours
+
 ## Integration with worktree-orchestrator
 
 This skill complements the `worktree-orchestrator` skill:

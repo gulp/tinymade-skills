@@ -821,6 +821,42 @@ async function getDiffStats(): Promise<{ additions: number; deletions: number }>
 - Documented minor improvements for future iteration
 - Confirmed task ready for archival with no immediate blocking changes required
 
+### 2025-12-15 - Documentation Updates
+
+**Updated documentation to reflect critical fixes and defensive improvements**.
+
+#### Documentation Created
+1. **CLI README** (`plugins/initializer/cli/README.md`)
+   - Comprehensive overview of initializer CLI architecture
+   - Detailed documentation of atomic write pattern with EEXIST handling
+   - Cleanup utility integration and purpose
+   - Input validation for task names
+   - Git repository validation
+   - Fsync considerations for dev vs production
+   - Context detection explanation
+   - Security considerations section
+
+#### Documentation Updated
+1. **agent-status skill** (`plugins/initializer/skills/agent-status/SKILL.md`)
+   - Added "How Status Reporting Works" section
+   - Documented atomic write pattern steps
+   - Explained validated input and safe directory creation
+   - Described automatic cleanup of orphaned temp files
+   - Clarified concurrent access safety
+
+2. **agent-monitor skill** (`plugins/initializer/skills/agent-monitor/SKILL.md`)
+   - Added "System Reliability" section
+   - Documented orphaned temp file cleanup
+   - Explained graceful handling of corrupted files
+   - Described git repository validation
+   - Documented concurrent write safety
+   - Listed stale agent detection threshold
+
+#### Files Reviewed (No Changes Needed)
+- Main README.md - Already references initializer in plugin table
+- worktree-orchestrator SKILL.md - Already documents initializer integration
+- Task README - Contains comprehensive implementation details
+
 ### 2025-12-15 - Applied Critical Fixes from Gemini Review
 
 **Applied fixes for 2 critical issues and 5 warnings identified in Gemini code review**.

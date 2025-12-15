@@ -109,6 +109,18 @@ The orchestrator monitors agent statuses and will see your blocked status via `i
 
 Status files are written to `.trees/.state/{task-name}.status.json` in the main repository. The orchestrator reads these files to track all parallel agents.
 
+### How Status Reporting Works
+
+Status reporting uses an **atomic write pattern** to safely handle concurrent access when multiple agents report simultaneously:
+
+1. **Validated Input**: Task names are validated to prevent path traversal (only letters, numbers, hyphens, underscores allowed)
+2. **Safe Directory Creation**: Handles EEXIST errors when multiple agents create the state directory concurrently
+3. **Temp File Write**: Writes to unique temp file `{task}.status.json.tmp.{PID}`
+4. **Atomic Rename**: Replaces status file atomically (orchestrator never sees partial updates)
+5. **Automatic Cleanup**: Orphaned temp files from crashed processes are cleaned up automatically
+
+This ensures your status reports are always safely persisted, even when multiple agents are reporting at the same time.
+
 ## Example Workflow
 
 ```
