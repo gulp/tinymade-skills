@@ -6,7 +6,7 @@
  */
 
 import { detectContext, getStateDir } from '../lib/context';
-import { readAllStatuses, readStatus, type AgentStatus } from '../lib/state';
+import { readAllStatuses, readStatus, cleanupTempFiles, type AgentStatus } from '../lib/state';
 import { join } from 'path';
 
 interface ShowArgs {
@@ -143,6 +143,9 @@ export async function showCommand(args: ShowArgs): Promise<void> {
   }
 
   const stateDir = getStateDir(context.projectRoot);
+
+  // Clean up orphaned temp files before reading statuses
+  cleanupTempFiles(stateDir);
 
   if (taskName) {
     // Show specific task

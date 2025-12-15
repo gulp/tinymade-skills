@@ -42,13 +42,17 @@ export async function statusCommand(args: StatusArgs): Promise<void> {
   const context = detectContext();
 
   // Determine task name
-  let taskName = args.task;
-  if (!taskName) {
-    taskName = context.taskName;
-  }
+  let taskName = args.task || context.taskName;
   if (!taskName) {
     throw new Error(
       'Could not determine task name. Use --task <name> or run from a worktree with a recognizable branch name.'
+    );
+  }
+
+  // Validate task name to prevent path traversal
+  if (!/^[a-zA-Z0-9_-]+$/.test(taskName)) {
+    throw new Error(
+      `Invalid task name '${taskName}'. Task names must contain only letters, numbers, hyphens, and underscores.`
     );
   }
 

@@ -29,17 +29,24 @@ export async function atomicWriteStatus(
   statusFilePath: string,
   status: AgentStatus
 ): Promise<void> {
-  // Ensure directory exists
+  // Ensure directory exists (handle race condition with EEXIST)
   const dir = dirname(statusFilePath);
-  if (!existsSync(dir)) {
+  try {
     mkdirSync(dir, { recursive: true });
+  } catch (error: any) {
+    // Ignore EEXIST - directory already exists (race with another agent)
+    if (error.code !== 'EEXIST') {
+      throw error;
+    }
   }
 
   // Write to temp file first
   const tempFile = `${statusFilePath}.tmp.${process.pid}`;
 
   try {
-    // Bun.write flushes by default
+    // Bun.write flushes by default, providing reasonable durability for dev tooling.
+    // For production systems requiring crash-consistency, an explicit fsync would be required:
+    // const fd = openSync(tempFile, 'w'); writeSync(fd, ...); fsyncSync(fd); closeSync(fd);
     await Bun.write(tempFile, JSON.stringify(status, null, 2));
 
     // Atomic rename

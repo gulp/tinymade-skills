@@ -12,6 +12,18 @@ export interface DiffStats {
  */
 export async function getDiffStats(): Promise<DiffStats | null> {
   try {
+    // Verify we're in a git repository before running git commands
+    const checkRepo = Bun.spawn(['git', 'rev-parse', '--git-dir'], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    });
+    await checkRepo.exited;
+
+    if (checkRepo.exitCode !== 0) {
+      // Not in a git repository
+      return null;
+    }
+
     // Try origin/main first, then origin/master
     let baseBranch = 'origin/main';
 

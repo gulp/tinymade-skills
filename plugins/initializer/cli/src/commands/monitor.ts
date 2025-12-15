@@ -6,7 +6,7 @@
  */
 
 import { detectContext, getStateDir } from '../lib/context';
-import { readAllStatuses, type AgentStatus } from '../lib/state';
+import { readAllStatuses, cleanupTempFiles, type AgentStatus } from '../lib/state';
 
 interface MonitorArgs {
   _: string[];
@@ -28,7 +28,7 @@ const RESET = '\x1b[0m';
 const RED = '\x1b[31m';
 const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
-const BLUE = '\x1b[34m';
+// const BLUE = '\x1b[34m';
 const CYAN = '\x1b[36m';
 const WHITE = '\x1b[37m';
 const BG_RED = '\x1b[41m';
@@ -185,6 +185,9 @@ export async function monitorCommand(_args: MonitorArgs): Promise<void> {
 
   const stateDir = getStateDir(context.projectRoot);
 
+  // Clean up orphaned temp files from crashed agents
+  cleanupTempFiles(stateDir);
+
   // Setup cleanup on exit
   const cleanup = () => {
     process.stdout.write(SHOW_CURSOR);
@@ -215,8 +218,8 @@ export async function monitorCommand(_args: MonitorArgs): Promise<void> {
   // Initial render
   await refreshLoop();
 
-  // Refresh loop
-  const interval = setInterval(refreshLoop, REFRESH_INTERVAL_MS);
+  // Refresh loop (interval is managed by cleanup handlers)
+  setInterval(refreshLoop, REFRESH_INTERVAL_MS);
 
   // Keep process alive
   await new Promise(() => {
