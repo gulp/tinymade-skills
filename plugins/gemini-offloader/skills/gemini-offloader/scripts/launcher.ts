@@ -6,6 +6,31 @@
  * Run this when the skill is activated to determine user intent.
  */
 
+import { Judgeval, NodeTracer } from "judgeval";
+
+// Initialize Judgment Labs tracing
+const tracingEnabled = !!(process.env.JUDGMENT_ORG_ID && process.env.JUDGMENT_API_KEY);
+let tracer: NodeTracer | null = null;
+
+async function initTracer(): Promise<NodeTracer | null> {
+  if (!tracingEnabled) return null;
+  try {
+    const judgeval = Judgeval.create({
+      organizationId: process.env.JUDGMENT_ORG_ID!,
+      apiKey: process.env.JUDGMENT_API_KEY!,
+    });
+    const t = await judgeval.nodeTracer.create({
+      projectName: "tinymade-skills-gemini-offloader",
+    });
+    await t.initialize();
+    return t;
+  } catch (err) {
+    // Tracing failed to init - continue without it
+    console.error("Tracing init failed:", err);
+    return null;
+  }
+}
+
 import { existsSync } from "fs";
 import { readdir, readFile } from "fs/promises";
 import { join } from "path";
@@ -411,6 +436,26 @@ function determineSuggestion(
 }
 
 async function main() {
+  // Initialize tracer first
+  tracer = await initTracer();
+
+  // Wrap functions with tracing if available
+  const tracedFindGemini = tracer
+    ? tracer.observe(findGemini, "span", "findGemini")
+    : findGemini;
+
+  const tracedCheckAuthentication = tracer
+    ? tracer.observe(checkAuthentication, "span", "checkAuthentication")
+    : checkAuthentication;
+
+  const tracedGetGlobalStats = tracer
+    ? tracer.observe(getGlobalStats, "span", "getGlobalStats")
+    : getGlobalStats;
+
+  const tracedGetProjectContext = tracer
+    ? tracer.observe(getProjectContext, "span", "getProjectContext")
+    : getProjectContext;
+
   const result: LauncherResult = {
     success: false,
     ready: false,
@@ -431,21 +476,21 @@ async function main() {
 
   try {
     // Check installation
-    const geminiPath = await findGemini();
+    const geminiPath = await tracedFindGemini();
     result.installed = !!geminiPath;
 
     // Check authentication
-    const auth = await checkAuthentication();
+    const auth = await tracedCheckAuthentication();
     result.authenticated = auth.authenticated;
 
     // Check state initialization
     result.state_initialized = existsSync(BASE_DIR) && existsSync(CONFIG_FILE);
 
     // Get global stats
-    result.global = await getGlobalStats();
+    result.global = await tracedGetGlobalStats();
 
     // Get project context (auto-initializes if valid git repo)
-    result.project = await getProjectContext();
+    result.project = await tracedGetProjectContext();
 
     // Build operations
     result.operations = buildOperations(
@@ -470,6 +515,12 @@ async function main() {
 
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
+  }
+
+  // Flush traces before exit
+  if (tracer) {
+    await tracer.forceFlush();
+    await tracer.shutdown();
   }
 
   console.log(JSON.stringify(result, null, 2));
