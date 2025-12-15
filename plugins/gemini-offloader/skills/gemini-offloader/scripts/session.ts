@@ -31,6 +31,29 @@
  *   }
  */
 
+import { Judgeval, NodeTracer } from "judgeval";
+
+// Initialize Judgment Labs tracing
+const tracingEnabled = !!(process.env.JUDGMENT_ORG_ID && process.env.JUDGMENT_API_KEY);
+let tracer: NodeTracer | null = null;
+
+async function initTracer(): Promise<NodeTracer | null> {
+  if (!tracingEnabled) return null;
+  try {
+    const judgeval = Judgeval.create({
+      organizationId: process.env.JUDGMENT_ORG_ID!,
+      apiKey: process.env.JUDGMENT_API_KEY!,
+    });
+    const t = await judgeval.nodeTracer.create({
+      projectName: "tinymade-skills-gemini-offloader",
+    });
+    await t.initialize();
+    return t;
+  } catch {
+    return null;
+  }
+}
+
 import { $ } from "bun";
 import { existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
@@ -1180,6 +1203,18 @@ async function cmdAdopt(args: {
 }
 
 async function main() {
+  // Initialize tracer
+  tracer = await initTracer();
+
+  // Wrap command functions with tracing
+  const tracedCmdList = tracer ? tracer.observe(cmdList, "span", "session.list") : cmdList;
+  const tracedCmdCreate = tracer ? tracer.observe(cmdCreate, "llm", "session.create") : cmdCreate;
+  const tracedCmdContinue = tracer ? tracer.observe(cmdContinue, "llm", "session.continue") : cmdContinue;
+  const tracedCmdDelete = tracer ? tracer.observe(cmdDelete, "span", "session.delete") : cmdDelete;
+  const tracedCmdMigrate = tracer ? tracer.observe(cmdMigrate, "span", "session.migrate") : cmdMigrate;
+  const tracedCmdDiscover = tracer ? tracer.observe(cmdDiscover, "span", "session.discover") : cmdDiscover;
+  const tracedCmdAdopt = tracer ? tracer.observe(cmdAdopt, "span", "session.adopt") : cmdAdopt;
+
   const args = Bun.argv.slice(2);
   const command = args[0];
 
@@ -1244,13 +1279,13 @@ async function main() {
 
   switch (command) {
     case "list":
-      result = await cmdList();
+      result = await tracedCmdList();
       break;
     case "create":
       if (!opts.name || !opts.prompt) {
         result = { success: false, error: "create requires --name and --prompt" };
       } else {
-        result = await cmdCreate({
+        result = await tracedCmdCreate({
           name: opts.name as string,
           prompt: opts.prompt as string,
           timeout: opts.timeout as number | undefined
@@ -1261,7 +1296,7 @@ async function main() {
       if (!opts.prompt) {
         result = { success: false, error: "continue requires --prompt" };
       } else {
-        result = await cmdContinue({
+        result = await tracedCmdContinue({
           name: opts.name as string | undefined,
           index: opts.index as number | undefined,
           prompt: opts.prompt as string,
@@ -1273,7 +1308,7 @@ async function main() {
       if (opts.index === undefined || !opts.prompt) {
         result = { success: false, error: "resume requires --index and --prompt" };
       } else {
-        result = await cmdContinue({
+        result = await tracedCmdContinue({
           index: opts.index as number,
           prompt: opts.prompt as string,
           timeout: opts.timeout as number | undefined
@@ -1284,14 +1319,14 @@ async function main() {
       if (opts.index === undefined) {
         result = { success: false, error: "delete requires --index" };
       } else {
-        result = await cmdDelete({ index: opts.index as number });
+        result = await tracedCmdDelete({ index: opts.index as number });
       }
       break;
     case "migrate":
-      result = await cmdMigrate();
+      result = await tracedCmdMigrate();
       break;
     case "discover":
-      result = await cmdDiscover({
+      result = await tracedCmdDiscover({
         allProjects: opts.allProjects as boolean | undefined
       });
       break;
@@ -1301,7 +1336,7 @@ async function main() {
       } else if (opts.index === undefined && !opts.sessionId) {
         result = { success: false, error: "adopt requires --index or --session-id" };
       } else {
-        result = await cmdAdopt({
+        result = await tracedCmdAdopt({
           index: opts.index as number | undefined,
           sessionId: opts.sessionId as string | undefined,
           name: opts.name as string,
@@ -1311,6 +1346,12 @@ async function main() {
       break;
     default:
       result = { success: false, error: `Unknown command: ${command}` };
+  }
+
+  // Flush traces before exit
+  if (tracer) {
+    await tracer.forceFlush();
+    await tracer.shutdown();
   }
 
   console.log(JSON.stringify(result, null, 2));

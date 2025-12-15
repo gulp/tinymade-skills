@@ -52,6 +52,29 @@
  *   }
  */
 
+import { Judgeval, NodeTracer } from "judgeval";
+
+// Initialize Judgment Labs tracing
+const tracingEnabled = !!(process.env.JUDGMENT_ORG_ID && process.env.JUDGMENT_API_KEY);
+let tracer: NodeTracer | null = null;
+
+async function initTracer(): Promise<NodeTracer | null> {
+  if (!tracingEnabled) return null;
+  try {
+    const judgeval = Judgeval.create({
+      organizationId: process.env.JUDGMENT_ORG_ID!,
+      apiKey: process.env.JUDGMENT_API_KEY!,
+    });
+    const t = await judgeval.nodeTracer.create({
+      projectName: "tinymade-skills-gemini-offloader",
+    });
+    await t.initialize();
+    return t;
+  } catch {
+    return null;
+  }
+}
+
 import { existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
@@ -925,6 +948,21 @@ async function cmdStoreResponse(args: { user: string; topic: string; file?: stri
 }
 
 async function main() {
+  // Initialize tracer
+  tracer = await initTracer();
+
+  // Wrap command functions with tracing
+  const tracedCmdStatus = tracer ? tracer.observe(cmdStatus, "span", "memory.status") : cmdStatus;
+  const tracedCmdAdd = tracer ? tracer.observe(cmdAdd, "span", "memory.add") : cmdAdd;
+  const tracedCmdSearch = tracer ? tracer.observe(cmdSearch, "span", "memory.search") : cmdSearch;
+  const tracedCmdGet = tracer ? tracer.observe(cmdGet, "span", "memory.get") : cmdGet;
+  const tracedCmdDelete = tracer ? tracer.observe(cmdDelete, "span", "memory.delete") : cmdDelete;
+  const tracedCmdStoreResponse = tracer ? tracer.observe(cmdStoreResponse, "span", "memory.storeResponse") : cmdStoreResponse;
+  const tracedCmdIndexOffload = tracer ? tracer.observe(cmdIndexOffload, "span", "memory.indexOffload") : cmdIndexOffload;
+  const tracedCmdFilterLocal = tracer ? tracer.observe(cmdFilterLocal, "span", "memory.filterLocal") : cmdFilterLocal;
+  const tracedSearchScoped = tracer ? tracer.observe(searchScoped, "span", "memory.searchScoped") : searchScoped;
+  const tracedGetAllScoped = tracer ? tracer.observe(getAllScoped, "span", "memory.getAllScoped") : getAllScoped;
+
   const args = Bun.argv.slice(2);
   const command = args[0];
 
@@ -966,13 +1004,13 @@ async function main() {
 
   switch (command) {
     case "status":
-      result = await cmdStatus();
+      result = await tracedCmdStatus();
       break;
     case "add":
       if (!opts.user || !opts.text) {
         result = { success: false, error: "add requires --user and --text" };
       } else {
-        result = await cmdAdd({
+        result = await tracedCmdAdd({
           user: opts.user as string,
           text: opts.text as string,
           topic: opts.topic as string | undefined,
@@ -984,7 +1022,7 @@ async function main() {
       if (!opts.user || !opts.query) {
         result = { success: false, error: "search requires --user and --query" };
       } else {
-        result = await cmdSearch({
+        result = await tracedCmdSearch({
           user: opts.user as string,
           query: opts.query as string,
           limit: opts.limit as number | undefined
@@ -995,21 +1033,21 @@ async function main() {
       if (!opts.user) {
         result = { success: false, error: "get requires --user" };
       } else {
-        result = await cmdGet({ user: opts.user as string });
+        result = await tracedCmdGet({ user: opts.user as string });
       }
       break;
     case "delete":
       if (!opts.id) {
         result = { success: false, error: "delete requires --id" };
       } else {
-        result = await cmdDelete({ id: opts.id as string });
+        result = await tracedCmdDelete({ id: opts.id as string });
       }
       break;
     case "store-response":
       if (!opts.user || !opts.topic) {
         result = { success: false, error: "store-response requires --user and --topic" };
       } else {
-        result = await cmdStoreResponse({
+        result = await tracedCmdStoreResponse({
           user: opts.user as string,
           topic: opts.topic as string,
           file: opts.file as string | undefined
@@ -1020,7 +1058,7 @@ async function main() {
       if (!opts.summary || !opts.metadata) {
         result = { success: false, error: "index-offload requires --summary and --metadata" };
       } else {
-        result = await cmdIndexOffload({
+        result = await tracedCmdIndexOffload({
           summary: opts.summary as string,
           metadata: opts.metadata as string
         });
@@ -1045,7 +1083,7 @@ async function main() {
       break;
     case "filter-local":
       // Supports: --query, --since, --source, --session, --topic, --global, --limit
-      result = await cmdFilterLocal({
+      result = await tracedCmdFilterLocal({
         query: opts.query as string | undefined,
         since: opts.since as string | undefined,
         source: opts.source as string | undefined,
@@ -1064,7 +1102,7 @@ async function main() {
       } else if (!opts.query) {
         result = { success: false, error: "search-scoped requires --query" };
       } else {
-        result = await searchScoped({
+        result = await tracedSearchScoped({
           query: opts.query as string,
           scope: scope as SearchScope,
           projectHash: opts.project as string | undefined,
@@ -1082,7 +1120,7 @@ async function main() {
       if (!["agent", "project", "session"].includes(scope)) {
         result = { success: false, error: "scope must be one of: agent, project, session" };
       } else {
-        result = await getAllScoped({
+        result = await tracedGetAllScoped({
           scope: scope as SearchScope,
           projectHash: opts.project as string | undefined,
           sessionName: opts.session as string | undefined
@@ -1149,6 +1187,12 @@ async function main() {
 
     default:
       result = { success: false, error: `Unknown command: ${command}` };
+  }
+
+  // Flush traces before exit
+  if (tracer) {
+    await tracer.forceFlush();
+    await tracer.shutdown();
   }
 
   console.log(JSON.stringify(result, null, 2));

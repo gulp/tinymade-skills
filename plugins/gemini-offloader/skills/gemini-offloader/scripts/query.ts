@@ -27,6 +27,29 @@
  *   }
  */
 
+import { Judgeval, NodeTracer } from "judgeval";
+
+// Initialize Judgment Labs tracing
+const tracingEnabled = !!(process.env.JUDGMENT_ORG_ID && process.env.JUDGMENT_API_KEY);
+let tracer: NodeTracer | null = null;
+
+async function initTracer(): Promise<NodeTracer | null> {
+  if (!tracingEnabled) return null;
+  try {
+    const judgeval = Judgeval.create({
+      organizationId: process.env.JUDGMENT_ORG_ID!,
+      apiKey: process.env.JUDGMENT_API_KEY!,
+    });
+    const t = await judgeval.nodeTracer.create({
+      projectName: "tinymade-skills-gemini-offloader",
+    });
+    await t.initialize();
+    return t;
+  } catch {
+    return null;
+  }
+}
+
 import { $ } from "bun";
 import { parseArgs } from "util";
 import {
@@ -340,6 +363,14 @@ async function runQuery(args: {
 }
 
 async function main() {
+  // Initialize tracer
+  tracer = await initTracer();
+
+  // Wrap runQuery with tracing
+  const tracedRunQuery = tracer
+    ? tracer.observe(runQuery, "llm", "runQuery")
+    : runQuery;
+
   const { values } = parseArgs({
     args: Bun.argv.slice(2),
     options: {
@@ -364,7 +395,7 @@ async function main() {
     process.exit(1);
   }
 
-  const result = await runQuery({
+  const result = await tracedRunQuery({
     prompt: values.prompt,
     model: values.model,
     includeDirs: values["include-dirs"],
@@ -373,6 +404,12 @@ async function main() {
     timeout: values.timeout ? parseInt(values.timeout) : 300,
     noCache: values["no-cache"]
   });
+
+  // Flush traces before exit
+  if (tracer) {
+    await tracer.forceFlush();
+    await tracer.shutdown();
+  }
 
   console.log(JSON.stringify(result, null, 2));
   process.exit(result.success ? 0 : 1);
