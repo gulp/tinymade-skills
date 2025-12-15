@@ -11,6 +11,7 @@ Tasks for building and maintaining Claude Code skills and plugins - development 
 ## Active Tasks
 
 ### High Priority
+- `h-implement-gemini-observer.md` - Observable research sessions with traces, hardened prompts, status polling, and orthogonal INITIALIZE/OFFLOAD/OBSERVE separation
 - `h-implement-gemini-offloader-state-persistence/` - State persistence layer for gemini-offloader with filesystem cache, mem0 integration, and cross-session discovery
 
 ### Medium Priority
