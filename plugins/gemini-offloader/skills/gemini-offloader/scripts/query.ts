@@ -154,6 +154,16 @@ async function runQuery(args: {
   timeout?: number;
   noCache?: boolean;
 }): Promise<QueryResult> {
+  // Set trace attributes early
+  if (tracer) {
+    tracer.setAttributes({
+      "gemini.script": "query",
+      "gemini.model": args.model || "default",
+      "gemini.has_include_dirs": !!args.includeDirs,
+      "gemini.no_cache": !!args.noCache,
+    });
+  }
+
   const config = await loadConfig();
   const projectHash = await getProjectHash();
 
@@ -172,6 +182,12 @@ async function runQuery(args: {
     const cacheResult = await lookupCache(projectHash, sourceHash);
 
     if (cacheResult.hit && !cacheResult.stale && cacheResult.summary) {
+      if (tracer) {
+        tracer.setAttributes({
+          "gemini.cache_hit": true,
+          "gemini.project_hash": projectHash,
+        });
+      }
       return {
         success: true,
         response: cacheResult.summary,
@@ -286,6 +302,16 @@ async function runQuery(args: {
           // Ignore indexing errors silently
         });
 
+        // Track cache miss in trace
+        if (tracer) {
+          tracer.setAttributes({
+            "gemini.cache_hit": false,
+            "gemini.project_hash": projectHash,
+            "gemini.token_count": tokenCount,
+            "gemini.model_used": responseModel || "unknown",
+          });
+        }
+
         const result: QueryResult = {
           success: true,
           response: summary,
@@ -362,14 +388,27 @@ async function runQuery(args: {
   }
 }
 
+// Core query logic - wrapped as parent span
+async function queryCore(args: {
+  prompt: string;
+  model?: string;
+  includeDirs?: string;
+  yolo?: boolean;
+  output?: string;
+  timeout?: number;
+  noCache?: boolean;
+}): Promise<QueryResult> {
+  return runQuery(args);
+}
+
 async function main() {
   // Initialize tracer
   tracer = await initTracer();
 
-  // Wrap runQuery with tracing
-  const tracedRunQuery = tracer
-    ? tracer.observe(runQuery, "llm", "runQuery")
-    : runQuery;
+  // Wrap queryCore with parent span "query"
+  const tracedQueryCore = tracer
+    ? tracer.observe(queryCore, "llm", "query")
+    : queryCore;
 
   const { values } = parseArgs({
     args: Bun.argv.slice(2),
@@ -395,7 +434,7 @@ async function main() {
     process.exit(1);
   }
 
-  const result = await tracedRunQuery({
+  const result = await tracedQueryCore({
     prompt: values.prompt,
     model: values.model,
     includeDirs: values["include-dirs"],

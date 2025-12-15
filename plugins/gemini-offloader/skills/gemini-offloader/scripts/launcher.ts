@@ -435,11 +435,9 @@ function determineSuggestion(
   };
 }
 
-async function main() {
-  // Initialize tracer first
-  tracer = await initTracer();
-
-  // Wrap functions with tracing if available
+// Core launcher logic - extracted for tracing as parent span
+async function launcherCore(): Promise<LauncherResult> {
+  // Wrap functions with tracing if available (these become child spans)
   const tracedFindGemini = tracer
     ? tracer.observe(findGemini, "span", "findGemini")
     : findGemini;
@@ -513,9 +511,38 @@ async function main() {
     result.ready = result.installed && result.authenticated;
     result.success = true;
 
+    // Add trace attributes for filtering
+    if (tracer) {
+      tracer.setAttributes({
+        "gemini.script": "launcher",
+        "gemini.installed": result.installed,
+        "gemini.authenticated": result.authenticated,
+        "gemini.ready": result.ready,
+        "gemini.project_hash": result.project?.hash || "none",
+      });
+    }
+
   } catch (err) {
     result.error = err instanceof Error ? err.message : String(err);
+    if (tracer) {
+      tracer.setAttribute("error", true);
+      tracer.setAttribute("error.message", result.error);
+    }
   }
+
+  return result;
+}
+
+async function main() {
+  // Initialize tracer first
+  tracer = await initTracer();
+
+  // Wrap core logic with parent span "launcher"
+  const tracedLauncherCore = tracer
+    ? tracer.observe(launcherCore, "span", "launcher")
+    : launcherCore;
+
+  const result = await tracedLauncherCore();
 
   // Flush traces before exit
   if (tracer) {
