@@ -66,3 +66,6 @@ coverage/
 
 # Test files
 test-blocking-demo.txt
+
+# Agent evals test output
+test-output/

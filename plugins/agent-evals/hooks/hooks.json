@@ -1,0 +1,24 @@
+{
+  "PreToolUse": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bun ${CLAUDE_PLUGIN_ROOT}/scripts/capture-tool.ts"
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bun ${CLAUDE_PLUGIN_ROOT}/scripts/log-result.ts"
+        }
+      ]
+    }
+  ]
+}
