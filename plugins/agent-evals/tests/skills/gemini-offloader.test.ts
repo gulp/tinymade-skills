@@ -95,7 +95,7 @@ describe("Gemini Offloader Skill Invocation", () => {
     // First Skill call should be for gemini-offloader
     const firstSkillCall = skillCalls[0];
     const input = firstSkillCall.tool_input as { skill?: string };
-    expect(input.skill).toContain("gemini-offloader");
+    expect(input.skill).toMatch(/gemini-offloader$/);
   });
 
   test("Claude runs query.ts after skill activation", async () => {
@@ -246,9 +246,8 @@ describe("Gemini Offloader Trajectory Matching", () => {
 
     // Verify Bash is called after Skill (for script execution)
     const bashIndex = toolSequence.indexOf("Bash");
-    if (bashIndex >= 0) {
-      expect(bashIndex).toBeGreaterThan(skillIndex);
-    }
+    // Bash may not be called if skill activation fails, but if called must be after Skill
+    expect(bashIndex === -1 || bashIndex > skillIndex).toBe(true);
   });
 
   test("follows expected research query trajectory", async () => {
