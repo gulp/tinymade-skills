@@ -38,9 +38,11 @@ This task implements a local testing framework using Bun's native test runner (`
 ### Observability Infrastructure
 9. `09-langfuse-observability.md` - Migrate from Judgeval to self-hosted Langfuse
 
+### Dependency Fixes
+10. `10-fix-agentevals-dependency.md` - Fix @langchain/openai broken export (DONE)
+
 ## Next Steps
 
-- Implement subtask 07: gemini-offloader skill invocation tests (Layer 2)
 - Implement subtask 08: gemini-offloader e2e workflow tests (Layer 3)
 - Add subtask 09 (Langfuse observability) when reference implementation ready
 - Consider expanding test coverage to other skills/plugins

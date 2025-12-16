@@ -1,7 +1,7 @@
 ---
 name: 07-gemini-offloader-skill-invocation
 parent: h-implement-bun-eval-suite
-status: pending
+status: done
 ---
 
 # Layer 2: Gemini-Offloader Skill Invocation Tests

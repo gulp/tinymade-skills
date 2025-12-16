@@ -10,5 +10,12 @@
   },
   "dependencies": {
     "agentevals": "^0.0.6"
+  },
+  "overrides": {
+    "@langchain/core": "0.1.54",
+    "@langchain/openai": "0.0.28"
+  },
+  "comments": {
+    "overrides": "Fix broken '_convertMessagesToOpenAIParams' export in @langchain/openai. Remove when agentevals updates deps. See subtask 10."
   }
 }
