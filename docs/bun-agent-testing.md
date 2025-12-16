@@ -266,3 +266,29 @@ For a solo developer testing Claude Code subagents across git worktrees:
 ## Conclusion
 
 The intersection of Claude Code's hook system with bun:test's speed creates a testing approach that outperforms the Vitest-based frameworks for this specific use case. **vitest-evals' ToolCallScorer** is excellent—but unavailable on Bun. The custom wrapper above replicates its core functionality while **Claude Code's native hooks provide deeper integration** than any external framework could achieve. Focus implementation effort on the hook-based tool call capture pattern and JSON schema assertions rather than fighting framework compatibility issues.
+
+---
+
+## Implementation Complete (2025-12-16)
+
+The framework described in this research doc has been fully implemented at:
+
+**Location**: `/home/gulp/projects/tinymade-skills/plugins/agent-evals/`
+
+**Key components**:
+- Hook scripts: `scripts/capture-tool.ts`, `scripts/log-result.ts`, `scripts/common.ts`
+- Test infrastructure: `tests/lib/harness.ts`, `tests/lib/bun-evals.ts`, `tests/lib/evaluators.ts`, `tests/lib/vcr.ts`, `tests/lib/worktree.ts`
+- Example tests: Gemini-offloader unit tests (30 tests) and skill invocation tests (6 tests)
+
+**Architecture decisions validated**:
+1. Hook types defined locally (SDK doesn't exist on npm) ✓
+2. `appendFile` used instead of `Bun.write()` for JSONL append ✓
+3. AgentEvals integration with message format adapter ✓
+4. Tool-level VCR (not API-level HTTP mocking) ✓
+5. Fuzzy argument matching for production tests ✓
+
+**Documentation**:
+- Plugin README: `/home/gulp/projects/tinymade-skills/plugins/agent-evals/README.md`
+- Plugin CLAUDE.md: `/home/gulp/projects/tinymade-skills/plugins/agent-evals/CLAUDE.md`
+- PRD (updated): `/home/gulp/projects/tinymade-skills/docs/prd-claude-code-agent-testing.md`
+- Task file: `/home/gulp/projects/tinymade-skills/sessions/tasks/done/h-implement-bun-eval-suite/README.md`

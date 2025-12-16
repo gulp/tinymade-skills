@@ -205,22 +205,53 @@ wait
 - Cross-agent communication testing (single-agent skills only)
 - Performance benchmarking (correctness first)
 
-## Open Questions
+## Implementation Status
 
-1. Should cassette recording happen at the Claude API level or tool execution level?
-2. What's the right granularity for trajectory snapshots—per-turn or per-tool-call?
-3. How to handle non-deterministic tool argument generation (e.g., timestamps, UUIDs)?
+COMPLETED 2025-12-16
 
----
+All phases implemented and tested. Reference implementation:
 
-## Instructions for Claude Code
+- **Phase 1-5**: Complete - See `/home/gulp/projects/tinymade-skills/plugins/agent-evals/`
+- **Test suite**: Gemini-offloader unit tests (30 tests) and skill invocation tests (6 tests)
+- **Task file**: `/home/gulp/projects/tinymade-skills/sessions/tasks/done/h-implement-bun-eval-suite/README.md`
 
-Implement this testing framework incrementally:
+## Open Questions (Resolved)
 
-1. **Phase 1**: Set up hooks and basic tool call capture to JSONL
-2. **Phase 2**: Create `bun-evals.ts` wrapper with `describeEval` API
-3. **Phase 3**: Integrate AgentEvals' `createTrajectoryMatchEvaluator`
-4. **Phase 4**: Add VCR cassette recording/replay for deterministic tests
-5. **Phase 5**: Implement parallel worktree isolation
+### 1. Should cassette recording happen at the Claude API level or tool execution level?
 
-Start with Phase 1. Ask clarifying questions before implementing if any requirements are ambiguous.
+**DECISION**: Tool execution level.
+
+VCR cassettes record tool call sequences (not HTTP payloads). This design:
+- Works regardless of Claude Code's internal HTTP implementation
+- Provides human-readable cassettes (tool calls, not binary HTTP)
+- Allows selective mocking of individual tools
+- Enables injection of modified tool responses for edge case testing
+
+Implementation: `/home/gulp/projects/tinymade-skills/plugins/agent-evals/tests/lib/vcr.ts`
+
+### 2. What's the right granularity for trajectory snapshots—per-turn or per-tool-call?
+
+**DECISION**: Per-tool-call.
+
+Each PreToolUse/PostToolUse hook writes a separate JSONL entry with timestamp. This enables:
+- Fine-grained assertions on individual tool invocations
+- Timestamp-based ordering for multi-threaded scenarios
+- Easy filtering by phase (`pre` vs `post`)
+
+Implementation: `/home/gulp/projects/tinymade-skills/plugins/agent-evals/scripts/common.ts` lines 68-80
+
+### 3. How to handle non-deterministic tool argument generation (e.g., timestamps, UUIDs)?
+
+**DECISION**: Use fuzzy argument matching with `toolArgsMatchMode: "subset"` and custom matchers.
+
+AgentEvals supports per-tool override functions for flexible matching:
+
+```typescript
+toolArgsMatchOverrides: {
+  Grep: grepPatternMatcher,    // Case-insensitive substring matching
+  Glob: globPatternMatcher,    // Wildcard-aware pattern matching
+  Read: readPathMatcher,       // Path normalization
+}
+```
+
+Implementation: `/home/gulp/projects/tinymade-skills/plugins/agent-evals/tests/lib/evaluators.ts` lines 207-287

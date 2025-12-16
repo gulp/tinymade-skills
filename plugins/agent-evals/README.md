@@ -261,14 +261,59 @@ plugins/agent-evals/
 └── README.md                # This file
 ```
 
+## Architecture
+
+The framework consists of three main layers:
+
+### 1. Hook Layer (`scripts/`)
+- `capture-tool.ts`: PreToolUse hook that writes tool invocations to JSONL when `TEST_MODE=true`
+- `log-result.ts`: PostToolUse hook that captures tool outputs and responses
+- `common.ts`: Shared TypeScript types and utilities
+
+Key implementation detail: Hook types (`PreToolUseHookInput`, `PostToolUseHookInput`) are defined locally because `@anthropic-ai/claude-code-sdk` doesn't exist on npm. Uses `appendFile` from `node:fs/promises` instead of `Bun.write()` since Bun doesn't support append mode.
+
+### 2. Test Infrastructure (`tests/lib/`)
+- `harness.ts`: Agent subprocess spawning, JSONL parsing, test ID generation
+- `bun-evals.ts`: Custom `describeEval` wrapper for bun:test with built-in scorers
+- `evaluators.ts`: AgentEvals integration with message format conversion and fuzzy matchers
+- `vcr.ts`: Cassette recording/playback for deterministic test replay
+- `worktree.ts`: Parallel worktree isolation utilities
+
+Key implementation detail: AgentEvals requires message format conversion (`ToolCallEntry[]` to `ChatCompletionMessage[]`). The adapter layer in `evaluators.ts` handles this transformation.
+
+### 3. Test Suites
+- **Layer 1 - Unit tests**: Direct CLI script testing (see gemini-offloader tests)
+- **Layer 2 - Skill invocation tests**: Verify Claude invokes skills correctly (`tests/skills/*.test.ts`)
+- **Layer 3 - End-to-end workflow tests**: Multi-agent coordination validation (planned)
+
 ## Features
 
-- **Tool call capture**: PreToolUse/PostToolUse hooks write complete JSONL logs
-- **Trajectory matching**: AgentEvals integration with fuzzy argument matching
-- **VCR cassette replay**: Record/replay tool calls for deterministic tests without API costs
-- **Parallel worktree isolation**: Run tests across multiple git worktrees simultaneously
-- **Bun-native API**: `describeEval`, `toolSequenceScorer`, `trajectoryMatchScorer`, and more
+- **Tool call capture**: PreToolUse/PostToolUse hooks write complete JSONL logs to `test-output/{TEST_RUN_ID}/tool-calls.jsonl`
+- **Trajectory matching**: AgentEvals integration with fuzzy argument matching (subset, superset, unordered, strict modes)
+- **VCR cassette replay**: Record tool call sequences and agent results for fast deterministic tests
+- **Parallel worktree isolation**: Run tests across multiple git worktrees with unique `TEST_RUN_ID` namespacing
+- **Bun-native API**: `describeEval`, built-in scorers (`toolSequenceScorer`, `toolOrderScorer`, `toolExclusionScorer`, `completionScorer`)
 - **Composable scorers**: Combine multiple evaluation criteria with `combineScorers`
+- **AgentEvals evaluators**: Pre-configured scorers (`claudeToolScorer`, `strictTrajectoryScorer`, `unorderedTrajectoryScorer`)
+
+## Implementation Files
+
+Reference these paths for implementation details:
+
+### Hook Scripts
+- `/home/gulp/projects/tinymade-skills/plugins/agent-evals/scripts/capture-tool.ts` (lines 1-40)
+- `/home/gulp/projects/tinymade-skills/plugins/agent-evals/scripts/log-result.ts`
+- `/home/gulp/projects/tinymade-skills/plugins/agent-evals/scripts/common.ts` (lines 8-80 for type definitions)
+
+### Test Infrastructure
+- `/home/gulp/projects/tinymade-skills/plugins/agent-evals/tests/lib/harness.ts` (lines 37-95 for `runAgent()`, lines 110-136 for parsing)
+- `/home/gulp/projects/tinymade-skills/plugins/agent-evals/tests/lib/bun-evals.ts` (lines 136-186 for `describeEval()`)
+- `/home/gulp/projects/tinymade-skills/plugins/agent-evals/tests/lib/evaluators.ts` (lines 133-205 for AgentEvals integration)
+- `/home/gulp/projects/tinymade-skills/plugins/agent-evals/tests/lib/vcr.ts` (lines 207-258 for VCR task wrapper)
+
+### Example Tests
+- Unit tests: `/home/gulp/projects/tinymade-skills/plugins/gemini-offloader/skills/gemini-offloader/tests/*.test.ts`
+- Skill invocation tests: `/home/gulp/projects/tinymade-skills/plugins/agent-evals/tests/skills/gemini-offloader.test.ts`
 
 ## Limitations
 
@@ -276,4 +321,8 @@ plugins/agent-evals/
 
 2. **Subprocess isolation**: Each `runAgent()` spawns a new Claude process. Tests are isolated but slower than unit tests.
 
-3. **VCR replay limitations**: Current VCR implementation records tool-level interactions. Full API-level replay with modified responses is still under development.
+3. **VCR architecture**: Uses tool-level recording (not API-level HTTP mocking). Cassettes contain tool calls and responses, not raw HTTP payloads. This design works regardless of Claude Code's internal HTTP implementation.
+
+4. **External CLI dependencies**: Tests that spawn external CLI tools (like `gemini`) require responsiveness checks to avoid indefinite hangs. Use minimal PATH environments or timeout wrappers. See gemini-offloader tests for patterns.
+
+5. **Bun.spawn stdin inheritance**: Avoid `stdin: "inherit"` in spawned processes during tests unless testing TTY behavior. It can cause hangs when no TTY is available.

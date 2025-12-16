@@ -29,23 +29,31 @@ Unit tests are located in `../tests/` directory.
 
 Run all tests:
 ```bash
-cd ..
+cd ../tests
 bun test
 ```
 
 Run specific test file:
 ```bash
-cd ..
-bun test tests/launcher.test.ts
+cd ../tests
+bun test launcher.test.ts
 ```
 
 Tests validate:
-- JSON output structure
-- Error handling
-- Cache behavior
-- Authentication detection
-- Session management
+- **Layer 1 (Unit tests)**: Direct CLI script testing
+  - `query.test.ts`: Argument validation, JSON output structure, cache behavior
+  - `launcher.test.ts`: Operations list structure, LauncherResult validation
+  - `session.test.ts`: Command parsing, session management, error handling
+- **Layer 2 (Skill invocation)**: Validate Claude invokes Skill tool correctly
+  - Located at `/home/gulp/projects/tinymade-skills/plugins/agent-evals/tests/skills/gemini-offloader.test.ts`
 
-See `../tests/README.md` for more details on the test suite.
+### Running Tests with External Dependencies
+
+Tests that require `gemini-cli` will auto-skip if the CLI is not responsive. To test with the actual CLI:
+
+1. Ensure `gemini` is installed and authenticated
+2. Run tests normally
+
+Tests use responsiveness checks to avoid hanging when `gemini-cli` is unavailable or unresponsive.
 
 This project uses [Bun](https://bun.com) as its JavaScript runtime.
