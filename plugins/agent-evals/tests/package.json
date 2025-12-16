@@ -7,5 +7,8 @@
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "agentevals": "^0.0.6"
   }
 }

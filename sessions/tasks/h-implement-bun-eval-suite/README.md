@@ -15,10 +15,10 @@ This task implements a local testing framework using Bun's native test runner (`
 
 ## Success Criteria
 - [x] Tool call capture via PreToolUse/PostToolUse hooks writes to JSONL
-- [ ] Custom `describeEval` wrapper provides vitest-evals-like API for bun:test
-- [ ] AgentEvals `createTrajectoryMatchEvaluator` integration validates tool sequences
-- [ ] VCR cassette recording enables deterministic replay without API calls
-- [ ] Parallel test isolation across git worktrees via unique output paths
+- [x] Custom `describeEval` wrapper provides vitest-evals-like API for bun:test
+- [x] AgentEvals `createTrajectoryMatchEvaluator` integration validates tool sequences
+- [x] VCR cassette recording enables deterministic replay without API calls
+- [x] Parallel test isolation across git worktrees via unique output paths
 
 ## Subtasks
 
