@@ -1,7 +1,7 @@
 ---
 name: 09-langfuse-observability
 parent: h-implement-bun-eval-suite
-status: pending
+status: in-progress
 created: 2025-12-15
 ---
 
