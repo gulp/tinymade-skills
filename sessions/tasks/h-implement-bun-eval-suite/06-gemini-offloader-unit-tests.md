@@ -1,7 +1,7 @@
 ---
 name: 06-gemini-offloader-unit-tests
 parent: h-implement-bun-eval-suite
-status: pending
+status: done
 ---
 
 # Layer 1: Gemini-Offloader Unit Tests
@@ -12,11 +12,11 @@ Test gemini-offloader CLI scripts directly using `bun test`. This validates the 
 
 ## Success Criteria
 
-- [ ] Unit tests exist at `plugins/gemini-offloader/skills/gemini-offloader/tests/`
-- [ ] `query.ts` tests: missing prompt error, cache hit/miss, JSON output structure
-- [ ] `launcher.ts` tests: operations list, authentication detection, project context
-- [ ] `session.ts` tests: session creation, continuation, migration
-- [ ] Tests run with `bun test` and pass in CI
+- [x] Unit tests exist at `plugins/gemini-offloader/skills/gemini-offloader/tests/`
+- [x] `query.ts` tests: missing prompt error, cache hit/miss, JSON output structure
+- [x] `launcher.ts` tests: operations list, authentication detection, project context
+- [x] `session.ts` tests: session creation, continuation, migration
+- [x] Tests run with `bun test` and pass in CI
 
 ## Implementation
 
