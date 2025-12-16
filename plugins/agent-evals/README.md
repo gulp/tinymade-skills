@@ -261,16 +261,19 @@ plugins/agent-evals/
 └── README.md                # This file
 ```
 
+## Features
+
+- **Tool call capture**: PreToolUse/PostToolUse hooks write complete JSONL logs
+- **Trajectory matching**: AgentEvals integration with fuzzy argument matching
+- **VCR cassette replay**: Record/replay tool calls for deterministic tests without API costs
+- **Parallel worktree isolation**: Run tests across multiple git worktrees simultaneously
+- **Bun-native API**: `describeEval`, `toolSequenceScorer`, `trajectoryMatchScorer`, and more
+- **Composable scorers**: Combine multiple evaluation criteria with `combineScorers`
+
 ## Limitations
 
 1. **Hooks must be loaded**: The plugin's hooks need to be active. If testing in a clean environment, ensure the plugin is installed.
 
 2. **Subprocess isolation**: Each `runAgent()` spawns a new Claude process. Tests are isolated but slower than unit tests.
 
-3. **No VCR yet**: Tests hit the real Claude API. VCR cassette recording for deterministic replay is planned for a future subtask.
-
-## Next Steps
-
-- **AgentEvals integration**: Add `createTrajectoryMatchEvaluator` for fuzzy trajectory matching
-- **VCR cassettes**: Record/replay API responses for fast, deterministic tests
-- **Parallel worktree isolation**: Run tests across multiple git worktrees simultaneously
+3. **VCR replay limitations**: Current VCR implementation records tool-level interactions. Full API-level replay with modified responses is still under development.

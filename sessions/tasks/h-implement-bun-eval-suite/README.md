@@ -19,6 +19,7 @@ This task implements a local testing framework using Bun's native test runner (`
 - [x] AgentEvals `createTrajectoryMatchEvaluator` integration validates tool sequences
 - [x] VCR cassette recording enables deterministic replay without API calls
 - [x] Parallel test isolation across git worktrees via unique output paths
+- [x] Gemini-offloader unit tests validate CLI script behavior
 
 ## Subtasks
 
@@ -36,6 +37,13 @@ This task implements a local testing framework using Bun's native test runner (`
 
 ### Observability Infrastructure
 9. `09-langfuse-observability.md` - Migrate from Judgeval to self-hosted Langfuse
+
+## Next Steps
+
+- Implement subtask 07: gemini-offloader skill invocation tests (Layer 2)
+- Implement subtask 08: gemini-offloader e2e workflow tests (Layer 3)
+- Add subtask 09 (Langfuse observability) when reference implementation ready
+- Consider expanding test coverage to other skills/plugins
 
 ## Context Manifest
 
@@ -696,40 +704,110 @@ const mockRunAgent = playCassette("cassettes/my-test.json");
 
 Future work on VCR replay should focus on mocking the test harness layer (`runAgent()` function), not the HTTP layer. This architectural decision means cassettes are **tool execution recordings**.
 
+### Discovered During Implementation - Session 3
+[Date: 2025-12-16 / Unit test implementation for gemini-offloader]
+
+During implementation of unit tests for the gemini-offloader CLI scripts, we discovered critical testing gotchas related to external CLI dependencies that weren't documented in the original eval suite architecture.
+
+**gemini-cli Can Hang Indefinitely on `--list-sessions` Command**
+
+The gemini-cli tool (Google's Gemini API CLI) can hang when called with `--list-sessions` in certain environments, particularly when running under test harnesses without a TTY. This wasn't documented in any gemini-cli docs and caused initial test timeouts.
+
+The actual behavior: Commands like `gemini --list-sessions` will hang indefinitely (no timeout, no error) when:
+- Running in CI/automated test environments
+- Spawned from Bun.spawn without proper stdin configuration
+- System is under load or has gemini authentication issues
+
+**Solution implemented**: Tests that depend on external CLIs must check responsiveness before running:
+```typescript
+async function isGeminiResponsive(): Promise<boolean> {
+  try {
+    const proc = Bun.spawn(["timeout", "2", "gemini", "--version"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+    return exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+// In test setup
+geminiResponsive = await isGeminiResponsive();
+
+// In tests
+if (!geminiResponsive) {
+  console.log("Skipping: gemini-cli not responsive");
+  return;
+}
+```
+
+Future implementations: Any test suite that spawns external CLI tools (especially API clients) should implement responsiveness checks. Don't assume external tools will fail fast - they may hang indefinitely.
+
+**Bun.spawn with `stdin: "inherit"` Causes Hangs in Test Context**
+
+The gemini-offloader session.ts script uses `Bun.spawn([geminiPath, "--list-sessions"], { stdin: "inherit" })` to call gemini-cli. This pattern works fine in interactive shells but hangs when run from bun test.
+
+The actual behavior: When stdin is inherited and there's no TTY (common in test runners), the spawned process may wait indefinitely for stdin input that will never come. This affects the `listSessions()` function in session.ts at line 166.
+
+**Root cause**: The gemini-cli expects interactive stdin for some operations. When tests spawn scripts that spawn gemini with inherited stdin, you get:
+```
+Test -> Bun.spawn(script.ts) -> Bun.spawn(gemini, {stdin: "inherit"}) -> HANGS
+```
+
+**Solution for tests**: Use minimal PATH to force "gemini not found" errors (fast failures) instead of hanging:
+```typescript
+const BUN_DIR = dirname(Bun.which("bun") || "/usr/bin/bun");
+
+const proc = Bun.spawn(["bun", `${SCRIPTS_DIR}/session.ts`, "list"], {
+  env: {
+    ...process.env,
+    PATH: BUN_DIR, // Only bun available, gemini not found
+  },
+});
+```
+
+This produces instant "gemini-cli not found" errors instead of multi-second hangs.
+
+Future implementations: When testing scripts that spawn external CLI tools:
+1. Default to PATH manipulation to exclude problematic tools (fast failure path)
+2. Use responsiveness checks + extended timeouts for real CLI interaction tests
+3. Never use `stdin: "inherit"` in spawned processes during tests unless specifically testing TTY behavior
+
 ## Work Log
 
-### 2025-12-16
+### 2025-12-16 Session 3
+
+#### Completed
+- Implemented subtask 06: gemini-offloader unit tests
+  - Created test directory at `plugins/gemini-offloader/skills/gemini-offloader/tests/`
+  - `query.test.ts`: 9 tests for argument validation, JSON output structure, cache behavior
+  - `launcher.test.ts`: 11 tests for LauncherResult structure, operations list validation
+  - `session.test.ts`: 13 tests for command parsing, graceful failures when gemini unavailable
+  - Test results: 30 pass, 3 skip, 0 fail (~51 seconds execution time)
+
+#### Decisions
+- Used minimal PATH environment to force fast "gemini not found" errors
+- Auto-skip gemini-dependent tests when CLI unresponsive (prevents 30s hangs)
+- Tests validate both success paths and error handling for missing dependencies
+
+#### Commits
+- 0cf4256: Initial gemini-offloader test suite with query/launcher/session tests
+- 21a85ed: Additional test coverage and skip logic refinements
+
+### 2025-12-16 Session 2
 
 #### Completed
 - Implemented subtask 02: `tests/lib/bun-evals.ts` with `describeEval` wrapper
-  - vitest-evals-like API for bun:test
-  - Built-in scorers: toolSequenceScorer, toolOrderScorer, toolExclusionScorer, completionScorer
-  - Support for both grouped and individual test cases
 - Implemented subtask 03: `tests/lib/evaluators.ts` with AgentEvals integration
-  - Installed agentevals@0.0.6 package
-  - Created trajectory matching evaluator factories
-  - Integrated with createTrajectoryMatchEvaluator for tool sequence validation
 - Implemented subtask 04: `tests/lib/vcr.ts` with VCR cassette recording/playback
-  - Record/replay Claude API responses for deterministic tests
-  - Cassette storage structure with metadata
 - Implemented subtask 05: `tests/lib/worktree.ts` with parallel worktree isolation
-  - Per-worktree test environment setup utilities
-  - Documented parallel execution patterns
 - Created example test file: `tests/examples/file-search.test.ts`
-  - Demonstrates describeEval API usage
-  - Shows trajectory matching and tool sequence scoring
-- Updated all 5 success criteria checkboxes to complete
 
 #### Decisions
-- Integrated agentevals v0.0.6 for trajectory matching (LangChain's official library)
-- Provided both grouped (`describeEval`) and individual (`describeEvalIndividual`) test modes
-- Built comprehensive scorer library with composition support via `combineScorers`
+- Integrated agentevals v0.0.6 for trajectory matching
 - VCR implementation uses Bun.mock.module() for HTTP interception
-
-#### Next Steps
-- Begin gemini-offloader test suite implementation (subtasks 06-08)
-- Add subtask 09 (Langfuse observability) when reference implementation ready
-- Consider adding more example tests for different agent patterns
 
 #### Commits
 - e91544a: Implemented subtasks 02-05 (bun-evals, evaluators, vcr, worktree)

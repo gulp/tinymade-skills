@@ -45,6 +45,7 @@ Or for local development:
 | initializer | Parallel agent coordination system with status reporting and monitoring TUI |
 | plane | Plane.so integration - sync issues, discover gaps, link tasks, create issues |
 | gemini-offloader | Offload context-heavy tasks to Google Gemini via gemini-cli with warm sessions and mem0 memory |
+| agent-evals | Local-first testing framework for validating Claude Code subagent behavior using Bun test runner |
 
 ## Adding New Plugins
 

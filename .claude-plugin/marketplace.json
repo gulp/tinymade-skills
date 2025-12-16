@@ -49,6 +49,14 @@
       "version": "1.0.0",
       "keywords": ["parallel", "agents", "status", "monitoring", "worktree", "coordination"],
       "category": "development"
+    },
+    {
+      "name": "agent-evals",
+      "source": "./plugins/agent-evals",
+      "description": "Local-first testing framework for validating Claude Code subagent behavior using Bun test runner",
+      "version": "1.0.0",
+      "keywords": ["testing", "evals", "trajectory", "validation", "bun", "agentevals"],
+      "category": "development"
     }
   ]
 }
