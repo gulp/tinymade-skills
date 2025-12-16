@@ -1,7 +1,7 @@
 ---
 name: h-implement-bun-eval-suite
 branch: feature/implement-bun-eval-suite
-status: in-progress
+status: completed
 created: 2025-12-15
 ---
 
