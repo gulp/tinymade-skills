@@ -618,6 +618,30 @@ This works reliably in Bun (which has full Node.js API compatibility) and is the
 
 ## Work Log
 
+### 2025-12-16
+
+#### Discovered
+- Claude Code plugin cache issues: Version updates to gemini-offloader (1.0.0 -> 1.0.2) weren't reflected in UI/execution
+- Root cause: `.claude-plugin/plugin.json` inside plugin directory is source of truth, not root `plugin.json`
+- Multiple cache layers exist: user settings, installed_plugins.json, plugin cache directory, marketplace.json
+- Plugin versioning requires updating three locations: `.claude-plugin/plugin.json` (primary), `marketplace.json`, root `plugin.json`
+
+#### Completed
+- Fixed gemini-offloader versioning across all three locations (bumped to 1.0.2)
+- Created comprehensive documentation: `docs/design-decision-plugin-versioning.md`
+- Documents plugin version management, cache invalidation procedures, and established patterns
+
+#### Decisions
+- Documented versioning as design decision rather than just fixing the immediate issue
+- Provides template for future plugin version bumps in the marketplace
+- Includes cache invalidation procedures for when updates don't propagate
+
+#### Context
+- Session started with task 09-langfuse-observability but task was cleared
+- Work pivoted to investigating why plugin updates weren't taking effect
+- Investigation was investigative/debugging rather than feature implementation
+- Commits: 4cb7486 (marketplace.json), 317db44 (.claude-plugin/plugin.json), 135487e (design decision doc)
+
 ### 2025-12-15
 
 #### Completed
@@ -650,3 +674,6 @@ This works reliably in Bun (which has full Node.js API compatibility) and is the
 #### Next Steps
 - Implement subtasks 02-05: bun-evals wrapper, AgentEvals integration, VCR cassettes, parallel isolation
 - Begin gemini-offloader test suite implementation (subtasks 06-08)
+
+### 2025-12-15 (Initial)
+- Task created from PRD
